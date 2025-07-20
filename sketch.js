@@ -176,6 +176,9 @@ function setupGUI() {
       "pixel",
       "pipe",
       "cloud",
+      "bubbles",
+      "smoke",
+      "square",
     ])
     .name("Shape Style")
     .onChange(function (value) {
@@ -270,7 +273,7 @@ function setupGUI() {
     .add(params, "ellipseResolution", 8, 32, 1)
     .name("Ellipse Resolution");
   shapeFolder.add(params, "positionNoise", 0, 50).name("Position Noise");
-  shapeFolder.add(params, "sizeNoise", 0, 0.5).name("Size Noise");
+  shapeFolder.add(params, "sizeNoise", 0, 1, 0.1).name("Size Noise");
   shapeFolder
     .add(params, "shapeCornerRadius", 0, 50)
     .name("Shape Corner Radius");
@@ -454,12 +457,33 @@ function applyShapeStyle(style) {
     params.shapeType = "ellipse";
     params.booleanUnion = true;
     params.positionNoise = 50;
-    params.sizeNoise = 1;
+    params.sizeNoise = 0.5;
     params.showPathShapeStroke = true;
     params.pathShapeStrokeWeight = 20;
     params.shapeBlur = 10;
     params.insideBlur = true;
     params.shapeSize = 0.8;
+  } else if (style === "bubbles") {
+    params.shapeType = "ellipse";
+    params.positionNoise = 50;
+    params.sizeNoise = 0.5;
+    params.showPathShapeStroke = true;
+    params.shapeSize = 0.2;
+    params.pathType = "curved";
+    params.curveAmount = 0.1;
+    params.pathShapeSpacing = 2;
+    params.gradientType = "radial";
+  } else if (style === "smoke") {
+    params.selectedCells = 7;
+    params.pathType = "curved";
+    params.curveAmount = 0.3;
+    params.shapeAlpha = 0.03;
+    params.gradientType = "conic";
+  } else if (style === "square") {
+    params.shapeSize = 0.9;
+    params.selectedCells = 15;
+    params.pathDirection = "90";
+    params.gradientType = "horizontal";
   }
 
   // Update all controllers to reflect the new values
