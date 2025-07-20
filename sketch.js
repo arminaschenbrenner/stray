@@ -3,7 +3,7 @@ let pathCells = [];
 let cellSizes = {};
 let polybool; // For boolean operations
 
-let params = {
+const defaultParams = {
   // Grid parameters
   gridWidth: 7,
   gridHeight: 7,
@@ -12,21 +12,21 @@ let params = {
   showGrid: true,
   gridOnTop: false,
   gridStrokeWeight: 2,
-  gridBlur: 0, // New parameter for grid blur
+  gridBlur: 0,
 
   // Shape parameters
   shapeType: "rectangle",
   shapeCornerRadius: 0,
   showPathShapeStroke: false,
   pathShapeStrokeWeight: 1,
-  shapeBlur: 0, // New parameter for full shape blur
-  insideBlur: false, // New parameter for inside-only blur
+  shapeBlur: 0,
+  insideBlur: false,
   shapeSize: 1.0,
-  booleanUnion: false, // New parameter
-  ellipseResolution: 32, // New parameter for ellipse polygon resolution
-  positionNoise: 0, // New parameter for random displacement
-  sizeNoise: 0, // New parameter for random size variation
-  showShape: true, // Renamed from showPath
+  booleanUnion: false,
+  ellipseResolution: 32,
+  positionNoise: 0,
+  sizeNoise: 0,
+  showShape: true,
 
   // Color parameters
   shapeFillColor: "#ff0000",
@@ -41,7 +41,7 @@ let params = {
   pathFillColor: "#666666",
 
   // Path parameters
-  showPath: false, // New parameter to draw the actual path line
+  showPath: false,
   fillPath: false,
   pathStrokeWeight: 2,
   pathType: "straight",
@@ -55,16 +55,34 @@ let params = {
   uniqueRowsCols: false,
   includeSides: true,
   pathBlur: 0,
+  pathCornerRadius: 0,
+  pathStrokeCap: "square",
+  pathStrokeJoin: "miter",
 
   // Gradient parameters
   gradientType: "none",
   gradientColors: "2",
 
-  // General parameters
-  regeneratePath: function () {
+  // Shape style
+  shapeStyle: "default",
+};
+
+let params = {};
+
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+
+  // Initialize params from defaultParams
+  for (const key in defaultParams) {
+    params[key] = defaultParams[key];
+  }
+
+  // Add the function properties
+  params.regeneratePath = function () {
     updatePathCells();
-  },
-  exportImage: function () {
+  };
+
+  params.exportImage = function () {
     let now = new Date();
     let dateString =
       now.getFullYear() +
@@ -76,8 +94,9 @@ let params = {
       String(now.getSeconds()).padStart(2, "0");
 
     saveCanvas(dateString + "_Atico_Stray", "png");
-  },
-  exportPackageVersions: function () {
+  };
+
+  params.exportPackageVersions = function () {
     // Save date string for consistent filenames
     let now = new Date();
     let dateString =
@@ -125,19 +144,8 @@ let params = {
     params.backgroundColor = originalBgColor;
     window.useTransparentBackground = originalUseTransparent;
     redraw(); // Restore original view
-  },
+  };
 
-  // Add these new parameters
-  pathCornerRadius: 0, // For rounded corners on the path
-  pathStrokeCap: "square", // For different stroke cap styles
-  pathStrokeJoin: "miter", // Default join style (options: miter, round, bevel)
-
-  // Add a new parameter for shape styles
-  shapeStyle: "default", // Options: "default", "paint", etc.
-};
-
-function setup() {
-  createCanvas(windowWidth, windowHeight);
   // Initialize transparent background flag
   window.useTransparentBackground = false;
 
@@ -392,6 +400,17 @@ function applyShapeStyle(style) {
     }
   }
 
+  // First reset to default values for all parameters
+  // This ensures no settings from previous styles remain
+  for (const key in defaultParams) {
+    if (
+      params.hasOwnProperty(key) &&
+      typeof defaultParams[key] !== "function"
+    ) {
+      params[key] = defaultParams[key];
+    }
+  }
+
   // Apply the selected style
   if (style === "paint") {
     // Set Paint style values
@@ -404,13 +423,6 @@ function applyShapeStyle(style) {
     params.pathStrokeCap = "round";
     params.pathStrokeJoin = "round";
     params.selectedCells = 10;
-
-    // Update all controllers to reflect the new values
-    for (let prop in controllers) {
-      if (controllers[prop]) {
-        controllers[prop].updateDisplay();
-      }
-    }
   } else if (style === "grid") {
     // Set Grid style values
     params.booleanUnion = true;
@@ -425,16 +437,6 @@ function applyShapeStyle(style) {
     params.selectedCells = 5;
     params.shapeType = "rectangle";
     params.showPath = false;
-
-    // Update all controllers to reflect the new values
-    for (let prop in controllers) {
-      if (controllers[prop]) {
-        controllers[prop].updateDisplay();
-      }
-    }
-
-    // Regenerate path with new settings
-    updatePathCells();
   } else if (style === "pixel") {
     // New Pixel style settings
     params.shapeType = "rectangle";
@@ -456,16 +458,13 @@ function applyShapeStyle(style) {
     params.insideBlur = false;
     params.pathBlur = 0;
     params.alignShapesToGrid = false;
+  }
 
-    // Update all controllers to reflect the new values
-    for (let prop in controllers) {
-      if (controllers[prop]) {
-        controllers[prop].updateDisplay();
-      }
+  // Update all controllers to reflect the new values
+  for (let prop in controllers) {
+    if (controllers[prop]) {
+      controllers[prop].updateDisplay();
     }
-  } else if (style === "default") {
-    // You could reset to default values here if needed
-    // For now, we'll let the user manually adjust from the Paint preset
   }
   // Regenerate the path after changing style settings
   updatePathCells();
@@ -3071,6 +3070,28 @@ function updatePathCells() {
     let key = `${cell.i},${cell.j}`;
     cellSizes[key] = random(0.5, 1.5);
   }
+}
+
+// Helper function to reset all parameters to default values
+function resetToDefaults() {
+  for (const key in defaultParams) {
+    if (
+      params.hasOwnProperty(key) &&
+      typeof defaultParams[key] !== "function"
+    ) {
+      params[key] = defaultParams[key];
+    }
+  }
+
+  // Update all controllers in the GUI
+  for (let folder in gui.__folders) {
+    for (let controller of gui.__folders[folder].__controllers) {
+      controller.updateDisplay();
+    }
+  }
+
+  // Regenerate the path
+  updatePathCells();
 }
 
 // Add the keyPressed function to handle keyboard shortcuts
