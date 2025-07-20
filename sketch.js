@@ -161,7 +161,7 @@ function setupGUI() {
 
   // Add the shape style dropdown
   generalFolder
-    .add(params, "shapeStyle", ["default", "paint"])
+    .add(params, "shapeStyle", ["default", "paint", "grid", "pixel"])
     .name("Shape Style")
     .onChange(function (value) {
       applyShapeStyle(value);
@@ -367,6 +367,20 @@ function applyShapeStyle(style) {
     curveAmount: null,
     pathStrokeCap: null,
     pathStrokeJoin: null,
+    selectedCells: null,
+    booleanUnion: null,
+    shapeCornerRadius: null,
+    showPathShapeStroke: null,
+    pathShapeStrokeWeight: null,
+    shapeBlur: null,
+    insideBlur: null,
+    shapeSize: null,
+    alignShapesToGrid: null,
+    shapeType: null,
+    positionNoise: null,
+    sizeNoise: null,
+    gradientType: null,
+    gradientColors: null,
   };
 
   // Find all controllers we need to update
@@ -397,10 +411,64 @@ function applyShapeStyle(style) {
         controllers[prop].updateDisplay();
       }
     }
+  } else if (style === "grid") {
+    // Set Grid style values
+    params.booleanUnion = true;
+    params.shapeCornerRadius = 20;
+    params.showPathShapeStroke = true;
+    params.pathShapeStrokeWeight = 30;
+    params.shapeBlur = 15;
+    params.insideBlur = true;
+    params.shapeSize = 1.1;
+    params.alignShapesToGrid = true;
+    params.showShape = true;
+    params.selectedCells = 5;
+    params.shapeType = "rectangle";
+    params.showPath = false;
+
+    // Update all controllers to reflect the new values
+    for (let prop in controllers) {
+      if (controllers[prop]) {
+        controllers[prop].updateDisplay();
+      }
+    }
+
+    // Regenerate path with new settings
+    updatePathCells();
+  } else if (style === "pixel") {
+    // New Pixel style settings
+    params.shapeType = "rectangle";
+    params.showShape = true;
+    params.booleanUnion = true;
+    params.positionNoise = 10;
+    params.sizeNoise = 0.5;
+    params.showPathShapeStroke = true;
+    params.pathShapeStrokeWeight = 5;
+    params.selectedCells = 8;
+    params.gradientType = "vertical";
+    params.gradientColors = "2";
+    params.shapeSize = 0.5;
+
+    // Turn off other features that might conflict
+    params.showPath = false;
+    params.shapeCornerRadius = 0;
+    params.shapeBlur = 0;
+    params.insideBlur = false;
+    params.pathBlur = 0;
+    params.alignShapesToGrid = false;
+
+    // Update all controllers to reflect the new values
+    for (let prop in controllers) {
+      if (controllers[prop]) {
+        controllers[prop].updateDisplay();
+      }
+    }
   } else if (style === "default") {
     // You could reset to default values here if needed
     // For now, we'll let the user manually adjust from the Paint preset
   }
+  // Regenerate the path after changing style settings
+  updatePathCells();
 }
 
 function draw() {
