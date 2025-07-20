@@ -169,7 +169,14 @@ function setupGUI() {
 
   // Add the shape style dropdown
   generalFolder
-    .add(params, "shapeStyle", ["default", "paint", "grid", "pixel"])
+    .add(params, "shapeStyle", [
+      "default",
+      "paint",
+      "grid",
+      "pixel",
+      "pipe",
+      "cloud",
+    ])
     .name("Shape Style")
     .onChange(function (value) {
       applyShapeStyle(value);
@@ -413,7 +420,6 @@ function applyShapeStyle(style) {
 
   // Apply the selected style
   if (style === "paint") {
-    // Set Paint style values
     params.showShape = false;
     params.showPath = true;
     params.pathBlur = 10;
@@ -424,7 +430,6 @@ function applyShapeStyle(style) {
     params.pathStrokeJoin = "round";
     params.selectedCells = 10;
   } else if (style === "grid") {
-    // Set Grid style values
     params.booleanUnion = true;
     params.shapeCornerRadius = 20;
     params.showPathShapeStroke = true;
@@ -433,31 +438,28 @@ function applyShapeStyle(style) {
     params.insideBlur = true;
     params.shapeSize = 1.1;
     params.alignShapesToGrid = true;
-    params.showShape = true;
-    params.selectedCells = 5;
-    params.shapeType = "rectangle";
-    params.showPath = false;
   } else if (style === "pixel") {
-    // New Pixel style settings
-    params.shapeType = "rectangle";
-    params.showShape = true;
     params.booleanUnion = true;
     params.positionNoise = 10;
     params.sizeNoise = 0.5;
     params.showPathShapeStroke = true;
     params.pathShapeStrokeWeight = 5;
     params.selectedCells = 8;
-    params.gradientType = "vertical";
-    params.gradientColors = "2";
     params.shapeSize = 0.5;
-
-    // Turn off other features that might conflict
-    params.showPath = false;
-    params.shapeCornerRadius = 0;
-    params.shapeBlur = 0;
-    params.insideBlur = false;
-    params.pathBlur = 0;
-    params.alignShapesToGrid = false;
+  } else if (style === "pipe") {
+    params.shapeType = "ellipse";
+    params.selectedCells = 8;
+    params.gradientType = "diagonal";
+  } else if (style === "cloud") {
+    params.shapeType = "ellipse";
+    params.booleanUnion = true;
+    params.positionNoise = 50;
+    params.sizeNoise = 1;
+    params.showPathShapeStroke = true;
+    params.pathShapeStrokeWeight = 20;
+    params.shapeBlur = 10;
+    params.insideBlur = true;
+    params.shapeSize = 0.8;
   }
 
   // Update all controllers to reflect the new values
