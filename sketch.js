@@ -473,6 +473,7 @@ function applyShapeStyle(style) {
     params.curveAmount = 0.1;
     params.pathShapeSpacing = 2;
     params.gradientType = "radial";
+    params.gradientColors = "3";
   } else if (style === "smoke") {
     params.selectedCells = 7;
     params.pathType = "curved";
