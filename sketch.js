@@ -1,9 +1,441 @@
 let gui;
+
+// Global variables for path management
 let pathCells = [];
 let cellSizes = {};
-let polybool; // For boolean operations
 
-const defaultParams = {
+// Path Generator module
+const PathGenerator = {
+  generatePath() {
+    pathCells = [];
+    cellSizes = {};
+
+    // Initialize positions, used rows/columns, and edge points
+    let positions = [];
+    let usedRows = new Set();
+    let usedCols = new Set();
+    let startPoint = null;
+    let endPoint = null;
+
+    // Handle side connections if enabled
+    if (ParamsManager.params.includeSides && !ParamsManager.params.closedLoop) {
+      // Generate middle points on each edge
+      let edgePoints = [
+        {
+          i: 0,
+          j: Math.floor(ParamsManager.params.gridWidth / 2),
+          edge: "top",
+        },
+        {
+          i: Math.floor(ParamsManager.params.gridHeight / 2),
+          j: ParamsManager.params.gridWidth - 1,
+          edge: "right",
+        },
+        {
+          i: ParamsManager.params.gridHeight - 1,
+          j: Math.floor(ParamsManager.params.gridWidth / 2),
+          edge: "bottom",
+        },
+        {
+          i: Math.floor(ParamsManager.params.gridHeight / 2),
+          j: 0,
+          edge: "left",
+        },
+      ];
+
+      // Choose two random distinct edge points
+      if (edgePoints.length >= 2) {
+        let idx1 = Math.floor(random(edgePoints.length));
+        startPoint = edgePoints[idx1];
+        edgePoints.splice(idx1, 1);
+
+        let idx2 = Math.floor(random(edgePoints.length));
+        endPoint = edgePoints[idx2];
+      }
+
+      if (startPoint) {
+        pathCells.push(startPoint);
+        usedRows.add(startPoint.i);
+        usedCols.add(startPoint.j);
+      }
+
+      if (endPoint && !ParamsManager.params.closedLoop) {
+        usedRows.add(endPoint.i);
+        usedCols.add(endPoint.j);
+      }
+    }
+
+    // Calculate cells needed
+    let cellsNeeded = ParamsManager.params.selectedCells - pathCells.length;
+    if (
+      ParamsManager.params.includeSides &&
+      !ParamsManager.params.closedLoop &&
+      endPoint
+    ) {
+      cellsNeeded -= 1; // Reserve space for end point
+    }
+
+    // Create list of valid cells
+    for (let i = 0; i < ParamsManager.params.gridHeight; i++) {
+      for (let j = 0; j < ParamsManager.params.gridWidth; j++) {
+        if (
+          ParamsManager.params.uniqueRowsCols &&
+          (usedRows.has(i) || usedCols.has(j))
+        ) {
+          continue;
+        }
+
+        // Skip cells already in pathCells
+        let alreadyUsed = false;
+        for (let cell of pathCells) {
+          if (cell.i === i && cell.j === j) {
+            alreadyUsed = true;
+            break;
+          }
+        }
+
+        if (!alreadyUsed) {
+          positions.push({ i, j });
+        }
+      }
+    }
+
+    // Randomly select cells
+    while (pathCells.length < cellsNeeded && positions.length > 0) {
+      let index = Math.floor(random(positions.length));
+      let cell = positions[index];
+
+      pathCells.push(cell);
+      positions.splice(index, 1);
+
+      if (ParamsManager.params.uniqueRowsCols) {
+        // Remove cells in same row/column
+        positions = positions.filter(
+          (pos) => pos.i !== cell.i && pos.j !== cell.j
+        );
+
+        // Add to used rows/columns
+        usedRows.add(cell.i);
+        usedCols.add(cell.j);
+      }
+    }
+
+    // Add end point if using side connections
+    if (
+      ParamsManager.params.includeSides &&
+      !ParamsManager.params.closedLoop &&
+      endPoint
+    ) {
+      pathCells.push(endPoint);
+    }
+
+    // Apply path direction constraints
+    if (ParamsManager.params.pathDirection !== "any" && pathCells.length > 0) {
+      this.applyDirectionConstraints(usedRows, usedCols, startPoint, endPoint);
+    }
+
+    // Initialize random cell sizes
+    for (let cell of pathCells) {
+      let key = `${cell.i},${cell.j}`;
+      cellSizes[key] = random(0.5, 1.5);
+    }
+  },
+
+  applyDirectionConstraints(usedRows, usedCols, startPoint, endPoint) {
+    // Save edge points if needed
+    let edgePoints = [];
+    if (ParamsManager.params.includeSides && !ParamsManager.params.closedLoop) {
+      edgePoints = [pathCells[0], pathCells[pathCells.length - 1]];
+      pathCells = pathCells.slice(1, -1);
+    }
+
+    // Start with first cell
+    let firstCell =
+      ParamsManager.params.includeSides && !ParamsManager.params.closedLoop
+        ? edgePoints[0]
+        : pathCells[0];
+
+    // Clear path and start fresh
+    let newPathCells = [firstCell];
+    usedRows = new Set([firstCell.i]);
+    usedCols = new Set([firstCell.j]);
+
+    // Calculate target count
+    let targetCount =
+      ParamsManager.params.includeSides && !ParamsManager.params.closedLoop
+        ? ParamsManager.params.selectedCells - 1
+        : ParamsManager.params.selectedCells;
+
+    // Get all possible cells
+    let remainingCells = [];
+    for (let i = 0; i < ParamsManager.params.gridHeight; i++) {
+      for (let j = 0; j < ParamsManager.params.gridWidth; j++) {
+        // Skip cells already in the path
+        if (i === firstCell.i && j === firstCell.j) continue;
+
+        // Skip cells in used rows/cols if uniqueRowsCols is enabled
+        if (
+          ParamsManager.params.uniqueRowsCols &&
+          (usedRows.has(i) || usedCols.has(j))
+        )
+          continue;
+
+        remainingCells.push({ i, j });
+      }
+    }
+
+    // Build constrained path
+    while (newPathCells.length < targetCount - 1 && remainingCells.length > 0) {
+      let lastCell = newPathCells[newPathCells.length - 1];
+
+      // Find valid neighbors based on direction constraints
+      let validNeighbors = remainingCells.filter((cell) => {
+        // Determine direction type
+        let isVerticalOrHorizontal =
+          (cell.i === lastCell.i && cell.j !== lastCell.j) || // Same row
+          (cell.j === lastCell.j && cell.i !== lastCell.i); // Same column
+
+        let isDiagonal =
+          Math.abs(cell.i - lastCell.i) === Math.abs(cell.j - lastCell.j) && // Equal change
+          Math.abs(cell.i - lastCell.i) > 0; // Not the same cell
+
+        // Apply direction constraint
+        switch (ParamsManager.params.pathDirection) {
+          case "90":
+            return isVerticalOrHorizontal;
+          case "45":
+            return isDiagonal;
+          case "90+45":
+            return isVerticalOrHorizontal || isDiagonal;
+          default:
+            return true; // "any"
+        }
+      });
+
+      // Select next cell if valid neighbors exist
+      if (validNeighbors.length > 0) {
+        let randomIndex = Math.floor(random(validNeighbors.length));
+        let nextCell = validNeighbors[randomIndex];
+
+        newPathCells.push(nextCell);
+        usedRows.add(nextCell.i);
+        usedCols.add(nextCell.j);
+
+        // Remove from remaining cells
+        let indexToRemove = remainingCells.findIndex(
+          (cell) => cell.i === nextCell.i && cell.j === nextCell.j
+        );
+        if (indexToRemove !== -1) {
+          remainingCells.splice(indexToRemove, 1);
+        }
+
+        // Remove cells in same row/col if uniqueRowsCols is enabled
+        if (ParamsManager.params.uniqueRowsCols) {
+          remainingCells = remainingCells.filter(
+            (cell) => cell.i !== nextCell.i && cell.j !== nextCell.j
+          );
+        }
+      } else {
+        break; // No valid neighbors
+      }
+    }
+
+    // Handle connection to end edge point
+    if (
+      ParamsManager.params.includeSides &&
+      !ParamsManager.params.closedLoop &&
+      edgePoints.length > 1
+    ) {
+      let lastCell = newPathCells[newPathCells.length - 1];
+      let endPoint = edgePoints[1];
+      let canConnectDirectly = false;
+
+      // Check if direct connection respects direction constraints
+      switch (ParamsManager.params.pathDirection) {
+        case "90":
+          canConnectDirectly =
+            endPoint.i === lastCell.i || endPoint.j === lastCell.j;
+          break;
+        case "45":
+          canConnectDirectly =
+            Math.abs(endPoint.i - lastCell.i) ===
+            Math.abs(endPoint.j - lastCell.j);
+          break;
+        case "90+45":
+          canConnectDirectly =
+            endPoint.i === lastCell.i ||
+            endPoint.j === lastCell.j ||
+            Math.abs(endPoint.i - lastCell.i) ===
+              Math.abs(endPoint.j - lastCell.j);
+          break;
+        default: // "any"
+          canConnectDirectly = true;
+          break;
+      }
+
+      if (canConnectDirectly) {
+        newPathCells.push(endPoint);
+      } else {
+        // Need intermediate points
+        let intermediatePoints = [];
+
+        if (
+          ParamsManager.params.pathDirection === "90" ||
+          ParamsManager.params.pathDirection === "90+45"
+        ) {
+          // Try intermediate point with same row or column
+          let intermediateCell = {
+            i: lastCell.i, // Same row as last cell
+            j: endPoint.j, // Same column as end point
+          };
+
+          if (
+            !ParamsManager.params.uniqueRowsCols ||
+            (!usedRows.has(intermediateCell.i) &&
+              !usedCols.has(intermediateCell.j))
+          ) {
+            intermediatePoints.push(intermediateCell);
+          } else {
+            // Try other orientation
+            intermediateCell = {
+              i: endPoint.i, // Same row as end point
+              j: lastCell.j, // Same column as last cell
+            };
+
+            if (
+              !ParamsManager.params.uniqueRowsCols ||
+              (!usedRows.has(intermediateCell.i) &&
+                !usedCols.has(intermediateCell.j))
+            ) {
+              intermediatePoints.push(intermediateCell);
+            }
+          }
+        }
+
+        if (
+          ParamsManager.params.pathDirection === "45" ||
+          ParamsManager.params.pathDirection === "90+45"
+        ) {
+          // For diagonal paths
+          let di = endPoint.i - lastCell.i;
+          let dj = endPoint.j - lastCell.j;
+
+          if (Math.abs(di) !== Math.abs(dj)) {
+            // Calculate intermediate point for diagonal movement
+            let adjustRow = Math.abs(di) < Math.abs(dj);
+            let intermediate = {
+              i: adjustRow
+                ? lastCell.i + di
+                : lastCell.i + Math.sign(di) * Math.abs(dj),
+              j: adjustRow
+                ? lastCell.j + Math.sign(dj) * Math.abs(di)
+                : lastCell.j + dj,
+            };
+
+            // Ensure it's within grid bounds
+            if (
+              intermediate.i >= 0 &&
+              intermediate.i < ParamsManager.params.gridHeight &&
+              intermediate.j >= 0 &&
+              intermediate.j < ParamsManager.params.gridWidth
+            ) {
+              intermediatePoints.push(intermediate);
+            }
+          }
+        }
+
+        // Add intermediate points
+        for (let point of intermediatePoints) {
+          newPathCells.push(point);
+          usedRows.add(point.i);
+          usedCols.add(point.j);
+        }
+
+        // Add end point
+        newPathCells.push(endPoint);
+      }
+    }
+
+    // Replace original path with constrained path
+    pathCells = newPathCells;
+  },
+
+  getIntersectingGridCells(x1, y1, x2, y2) {
+    let cellWidth =
+      ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
+    let cellHeight =
+      ParamsManager.params.gridSize / ParamsManager.params.gridHeight;
+    let cells = [];
+
+    // Use Bresenham's line algorithm to find cells along the line
+    let startCellI = Math.floor(y1 / cellHeight);
+    let startCellJ = Math.floor(x1 / cellWidth);
+    let endCellI = Math.floor(y2 / cellHeight);
+    let endCellJ = Math.floor(x2 / cellWidth);
+
+    // Clamp to grid bounds
+    startCellI = constrain(startCellI, 0, ParamsManager.params.gridHeight - 1);
+    startCellJ = constrain(startCellJ, 0, ParamsManager.params.gridWidth - 1);
+    endCellI = constrain(endCellI, 0, ParamsManager.params.gridHeight - 1);
+    endCellJ = constrain(endCellJ, 0, ParamsManager.params.gridWidth - 1);
+
+    // Add start cell
+    cells.push({ i: startCellI, j: startCellJ });
+
+    // If start and end are the same, return single cell
+    if (startCellI === endCellI && startCellJ === endCellJ) {
+      return cells;
+    }
+
+    // Calculate deltas and step directions
+    let dx = Math.abs(endCellJ - startCellJ);
+    let dy = Math.abs(endCellI - startCellI);
+    let sx = startCellJ < endCellJ ? 1 : -1;
+    let sy = startCellI < endCellI ? 1 : -1;
+    let err = dx - dy;
+
+    let currentI = startCellI;
+    let currentJ = startCellJ;
+
+    // Maximum steps to prevent infinite loops
+    let maxSteps =
+      ParamsManager.params.gridWidth * ParamsManager.params.gridHeight;
+    let steps = 0;
+
+    // Traverse the grid
+    while (
+      (currentI !== endCellI || currentJ !== endCellJ) &&
+      steps < maxSteps
+    ) {
+      let e2 = 2 * err;
+      if (e2 > -dy) {
+        err -= dy;
+        currentJ += sx;
+      }
+      if (e2 < dx) {
+        err += dx;
+        currentI += sy;
+      }
+
+      // Add cell if within bounds
+      if (
+        currentI >= 0 &&
+        currentI < ParamsManager.params.gridHeight &&
+        currentJ >= 0 &&
+        currentJ < ParamsManager.params.gridWidth
+      ) {
+        cells.push({ i: currentI, j: currentJ });
+      }
+
+      steps++;
+    }
+
+    return cells;
+  },
+};
+
+// Global constants
+const DEFAULT_PARAMS = {
   // Grid parameters
   gridWidth: 7,
   gridHeight: 7,
@@ -67,22 +499,217 @@ const defaultParams = {
   shapeStyle: "default",
 };
 
-let params = {};
+// Style presets
+const ShapeStylePresets = {
+  default: {}, // Default values come from DEFAULT_PARAMS
+  paint: {
+    showShape: false,
+    showPath: true,
+    pathBlur: 10,
+    pathStrokeWeight: 75,
+    pathType: "curved",
+    curveAmount: 0.05,
+    pathStrokeCap: "round",
+    pathStrokeJoin: "round",
+    selectedCells: 10,
+  },
+  grid: {
+    booleanUnion: true,
+    shapeCornerRadius: 20,
+    showPathShapeStroke: true,
+    pathShapeStrokeWeight: 30,
+    shapeBlur: 15,
+    insideBlur: true,
+    shapeSize: 1.1,
+    alignShapesToGrid: true,
+    showShape: true,
+    selectedCells: 5,
+    shapeType: "rectangle",
+    showPath: false,
+  },
+  pixel: {
+    booleanUnion: true,
+    positionNoise: 10,
+    sizeNoise: 0.5,
+    showPathShapeStroke: true,
+    pathShapeStrokeWeight: 5,
+    selectedCells: 8,
+    shapeSize: 0.5,
+    shapeType: "rectangle",
+    showShape: true,
+    showPath: false,
+    gradientType: "vertical",
+    gradientColors: "2",
+  },
+  pipe: {
+    shapeType: "ellipse",
+    selectedCells: 8,
+    gradientType: "diagonal",
+  },
+  cloud: {
+    shapeType: "ellipse",
+    booleanUnion: true,
+    positionNoise: 50,
+    sizeNoise: 0.5,
+    showPathShapeStroke: true,
+    pathShapeStrokeWeight: 20,
+    shapeBlur: 10,
+    insideBlur: true,
+    shapeSize: 0.8,
+  },
+  bubbles: {
+    shapeType: "ellipse",
+    positionNoise: 50,
+    sizeNoise: 0.5,
+    showPathShapeStroke: true,
+    shapeSize: 0.2,
+    pathType: "curved",
+    curveAmount: 0.1,
+    pathShapeSpacing: 2,
+    gradientType: "radial",
+    gradientColors: "3",
+  },
+  smoke: {
+    selectedCells: 7,
+    pathType: "curved",
+    curveAmount: 0.3,
+    shapeAlpha: 0.03,
+    gradientType: "conic",
+  },
+  square: {
+    shapeSize: 0.9,
+    selectedCells: 15,
+    pathDirection: "90",
+    gradientType: "horizontal",
+  },
+};
+
+// Parameter Manager
+const ParamsManager = {
+  params: {},
+
+  init() {
+    // Clone the default parameters
+    this.params = JSON.parse(JSON.stringify(DEFAULT_PARAMS));
+
+    // Add function properties
+    this.params.regeneratePath = () => {
+      PathGenerator.generatePath();
+    };
+
+    this.params.exportImage = () => {
+      let now = new Date();
+      let dateString =
+        now.getFullYear() +
+        String(now.getMonth() + 1).padStart(2, "0") +
+        String(now.getDate()).padStart(2, "0") +
+        "_" +
+        String(now.getHours()).padStart(2, "0") +
+        String(now.getMinutes()).padStart(2, "0") +
+        String(now.getSeconds()).padStart(2, "0");
+
+      saveCanvas(dateString + "_Atico_Stray", "png");
+    };
+
+    this.params.exportPackageVersions = () => {
+      // Save date string for consistent filenames
+      let now = new Date();
+      let dateString =
+        now.getFullYear() +
+        String(now.getMonth() + 1).padStart(2, "0") +
+        String(now.getDate()).padStart(2, "0") +
+        "_" +
+        String(now.getHours()).padStart(2, "0") +
+        String(now.getMinutes()).padStart(2, "0") +
+        String(now.getSeconds()).padStart(2, "0");
+
+      // Save current state
+      let originalShowGrid = this.params.showGrid;
+      let originalBgColor = this.params.backgroundColor;
+      let originalUseTransparent = window.useTransparentBackground || false;
+
+      // Version 1: With grid (if not already showing)
+      if (!originalShowGrid) {
+        this.params.showGrid = true;
+        redraw();
+      }
+      saveCanvas(dateString + "_Atico_Stray_grid_bg", "png");
+
+      // Version 2: Without grid
+      this.params.showGrid = false;
+      redraw();
+      saveCanvas(dateString + "_Atico_Stray_nogrid_bg", "png");
+
+      // Add transparent mode flag
+      window.useTransparentBackground = true;
+
+      // Version 3: With grid + transparent background
+      this.params.showGrid = true;
+      redraw();
+      saveCanvas(dateString + "_Atico_Stray_grid_nobg", "png");
+
+      // Version 4: Without grid + transparent background
+      this.params.showGrid = false;
+      redraw();
+      saveCanvas(dateString + "_Atico_Stray_nobg", "png");
+
+      // Restore original state
+      this.params.showGrid = originalShowGrid;
+      this.params.backgroundColor = originalBgColor;
+      window.useTransparentBackground = originalUseTransparent;
+      redraw();
+    };
+  },
+
+  resetToDefaults() {
+    // Reset all parameters to defaults
+    for (const key in DEFAULT_PARAMS) {
+      if (
+        this.params.hasOwnProperty(key) &&
+        typeof DEFAULT_PARAMS[key] !== "function"
+      ) {
+        this.params[key] = DEFAULT_PARAMS[key];
+      }
+    }
+
+    // Update GUI and regenerate path
+    UIManager.updateAllControllers();
+    PathGenerator.generatePath();
+  },
+
+  applyStyle(style) {
+    // First reset to defaults
+    for (const key in DEFAULT_PARAMS) {
+      if (
+        this.params.hasOwnProperty(key) &&
+        typeof DEFAULT_PARAMS[key] !== "function"
+      ) {
+        this.params[key] = DEFAULT_PARAMS[key];
+      }
+    }
+
+    // Apply the selected style preset
+    if (ShapeStylePresets[style]) {
+      Object.assign(this.params, ShapeStylePresets[style]);
+    }
+
+    // Update UI and regenerate path
+    UIManager.updateAllControllers();
+    PathGenerator.generatePath();
+  },
+};
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
 
-  // Initialize params from defaultParams
-  for (const key in defaultParams) {
-    params[key] = defaultParams[key];
-  }
+  ParamsManager.init();
 
   // Add the function properties
-  params.regeneratePath = function () {
-    updatePathCells();
+  ParamsManager.params.regeneratePath = function () {
+    PathGenerator.generatePath();
   };
 
-  params.exportImage = function () {
+  ParamsManager.params.exportImage = function () {
     let now = new Date();
     let dateString =
       now.getFullYear() +
@@ -96,7 +723,7 @@ function setup() {
     saveCanvas(dateString + "_Atico_Stray", "png");
   };
 
-  params.exportPackageVersions = function () {
+  ParamsManager.params.exportPackageVersions = function () {
     // Save date string for consistent filenames
     let now = new Date();
     let dateString =
@@ -109,19 +736,19 @@ function setup() {
       String(now.getSeconds()).padStart(2, "0");
 
     // Save current state
-    let originalShowGrid = params.showGrid;
-    let originalBgColor = params.backgroundColor;
+    let originalShowGrid = ParamsManager.params.showGrid;
+    let originalBgColor = ParamsManager.params.backgroundColor;
     let originalUseTransparent = false; // Add a flag for transparent mode
 
     // Version 1: With grid (if not already showing)
     if (!originalShowGrid) {
-      params.showGrid = true;
+      ParamsManager.params.showGrid = true;
       redraw(); // Force redraw with updated parameters
     }
     saveCanvas(dateString + "_Atico_Stray_grid_bg", "png");
 
     // Version 2: Without grid
-    params.showGrid = false;
+    ParamsManager.params.showGrid = false;
     redraw(); // Force redraw with updated parameters
     saveCanvas(dateString + "_Atico_Stray_nogrid_bg", "png");
 
@@ -130,18 +757,18 @@ function setup() {
     window.useTransparentBackground = true;
 
     // Version 3: With grid + transparent background
-    params.showGrid = true;
+    ParamsManager.params.showGrid = true;
     redraw(); // Force redraw with transparent background
     saveCanvas(dateString + "_Atico_Stray_grid_nobg", "png");
 
     // Version 4: Without grid + transparent background
-    params.showGrid = false;
+    ParamsManager.params.showGrid = false;
     redraw(); // Force redraw with updated parameters
     saveCanvas(dateString + "_Atico_Stray_nobg", "png");
 
     // Restore original state
-    params.showGrid = originalShowGrid;
-    params.backgroundColor = originalBgColor;
+    ParamsManager.params.showGrid = originalShowGrid;
+    ParamsManager.params.backgroundColor = originalBgColor;
     window.useTransparentBackground = originalUseTransparent;
     redraw(); // Restore original view
   };
@@ -153,349 +780,346 @@ function setup() {
   if (typeof PolyBool !== "undefined") {
     polybool = PolyBool;
   }
-  setupGUI();
-  updatePathCells();
+
+  UIManager.setupGUI();
+
+  PathGenerator.generatePath();
 }
 
-function setupGUI() {
-  gui = new dat.GUI();
-  gui.width = 400;
+// UI Manager
+const UIManager = {
+  gui: null,
+  folders: {
+    general: null,
+    grid: null,
+    shape: null,
+    path: null,
+    color: null,
+  },
 
-  // Add General folder at the top
-  let generalFolder = gui.addFolder("General");
-  generalFolder.add(params, "regeneratePath").name("Regenerate (R)");
-  generalFolder.add(params, "exportImage").name("Save (S)");
-  generalFolder.add(params, "exportPackageVersions").name("Save (package) (E)"); // Updated name
+  setupGUI() {
+    this.gui = new dat.GUI();
+    this.gui.width = 400;
 
-  // Add the shape style dropdown
-  generalFolder
-    .add(params, "shapeStyle", [
-      "default",
-      "paint",
-      "grid",
-      "pixel",
-      "pipe",
-      "cloud",
-      "bubbles",
-      "smoke",
-      "square",
-    ])
-    .name("Shape Style")
-    .onChange(function (value) {
-      applyShapeStyle(value);
-    });
+    this.setupGeneralFolder();
+    this.setupGridFolder();
+    this.setupShapeFolder();
+    this.setupPathFolder();
+    this.setupColorFolder();
 
-  generalFolder.open();
+    // Open all folders
+    for (let key in this.folders) {
+      this.folders[key].open();
+    }
+  },
 
-  // Grid folder
-  let gridFolder = gui.addFolder("Grid");
-  gridFolder.add(params, "showGrid").name("Show Grid");
-  gridFolder.add(params, "gridOnTop").name("Grid on Top");
-  gridFolder.add(params, "squareGrid").name("Square Grid");
-  let widthControl = gridFolder
-    .add(params, "gridWidth", 1, 20, 1)
-    .onChange(() => {
-      if (params.squareGrid) {
-        params.gridHeight = params.gridWidth;
-        // Update GUI to reflect new height
-        for (let controller of gridFolder.__controllers) {
-          if (controller.property === "gridHeight") {
-            controller.updateDisplay();
+  setupGeneralFolder() {
+    this.folders.general = this.gui.addFolder("General");
+
+    this.folders.general
+      .add(ParamsManager.params, "regeneratePath")
+      .name("Regenerate (R)");
+    this.folders.general
+      .add(ParamsManager.params, "exportImage")
+      .name("Save (S)");
+    this.folders.general
+      .add(ParamsManager.params, "exportPackageVersions")
+      .name("Save (package) (E)");
+
+    this.folders.general
+      .add(ParamsManager.params, "shapeStyle", Object.keys(ShapeStylePresets))
+      .name("Shape Style")
+      .onChange((value) => ParamsManager.applyStyle(value));
+  },
+
+  setupGridFolder() {
+    this.folders.grid = this.gui.addFolder("Grid");
+
+    this.folders.grid.add(ParamsManager.params, "showGrid").name("Show Grid");
+    this.folders.grid
+      .add(ParamsManager.params, "gridOnTop")
+      .name("Grid on Top");
+    this.folders.grid
+      .add(ParamsManager.params, "squareGrid")
+      .name("Square Grid");
+
+    let widthControl = this.folders.grid
+      .add(ParamsManager.params, "gridWidth", 1, 20, 1)
+      .onChange(() => {
+        if (ParamsManager.params.squareGrid) {
+          ParamsManager.params.gridHeight = ParamsManager.params.gridWidth;
+          // Update height controller
+          for (let controller of this.folders.grid.__controllers) {
+            if (controller.property === "gridHeight") {
+              controller.updateDisplay();
+              break;
+            }
+          }
+        }
+        PathGenerator.generatePath();
+      });
+
+    let heightControl = this.folders.grid
+      .add(ParamsManager.params, "gridHeight", 1, 20, 1)
+      .onChange(() => {
+        if (ParamsManager.params.squareGrid) {
+          ParamsManager.params.gridWidth = ParamsManager.params.gridHeight;
+          // Update width controller
+          for (let controller of this.folders.grid.__controllers) {
+            if (controller.property === "gridWidth") {
+              controller.updateDisplay();
+              break;
+            }
+          }
+        }
+        PathGenerator.generatePath();
+      });
+
+    this.folders.grid
+      .add(ParamsManager.params, "gridSize", 100, 1000)
+      .name("Grid Size");
+    this.folders.grid
+      .add(ParamsManager.params, "gridStrokeWeight", 0.1, 5)
+      .name("Grid Stroke Weight");
+    this.folders.grid
+      .add(ParamsManager.params, "gridBlur", 0, 20)
+      .name("Grid Blur");
+  },
+
+  setupShapeFolder() {
+    this.folders.shape = this.gui.addFolder("Shape");
+
+    this.folders.shape
+      .add(ParamsManager.params, "shapeType", ["rectangle", "ellipse"])
+      .name("Shape Type");
+
+    this.folders.shape
+      .add(ParamsManager.params, "showShape")
+      .name("Show Shape");
+
+    let booleanUnionController = this.folders.shape
+      .add(ParamsManager.params, "booleanUnion")
+      .name("Boolean Union")
+      .onChange((value) => {
+        if (value === true && ParamsManager.params.pathShapeSpacing < 10) {
+          // Enforce minimum spacing
+          ParamsManager.params.pathShapeSpacing = 10;
+
+          // Update spacing controller
+          for (let controller of this.folders.path.__controllers) {
+            if (controller.property === "pathShapeSpacing") {
+              controller.updateDisplay();
+              break;
+            }
+          }
+        }
+
+        // Enable/disable insideBlur toggle
+        for (let controller of this.folders.shape.__controllers) {
+          if (controller.property === "insideBlur") {
+            controller.domElement.parentElement.style.pointerEvents = value
+              ? "auto"
+              : "none";
+            controller.domElement.parentElement.style.opacity = value
+              ? "1"
+              : "0.5";
+
+            // Turn off insideBlur if boolean union is off
+            if (!value && ParamsManager.params.insideBlur) {
+              ParamsManager.params.insideBlur = false;
+              controller.updateDisplay();
+            }
             break;
           }
         }
-      }
-      updatePathCells();
-    });
-  let heightControl = gridFolder
-    .add(params, "gridHeight", 1, 20, 1)
-    .onChange(() => {
-      if (params.squareGrid) {
-        params.gridWidth = params.gridHeight;
-        // Update GUI to reflect new width
-        for (let controller of gridFolder.__controllers) {
-          if (controller.property === "gridWidth") {
-            controller.updateDisplay();
-            break;
-          }
+      });
+    this.folders.shape
+      .add(ParamsManager.params, "ellipseResolution", 8, 32, 1)
+      .name("Ellipse Resolution");
+    this.folders.shape
+      .add(ParamsManager.params, "positionNoise", 0, 50)
+      .name("Position Noise");
+    this.folders.shape
+      .add(ParamsManager.params, "sizeNoise", 0, 1, 0.1)
+      .name("Size Noise");
+    this.folders.shape
+      .add(ParamsManager.params, "shapeCornerRadius", 0, 50)
+      .name("Shape Corner Radius");
+    this.folders.shape
+      .add(ParamsManager.params, "showPathShapeStroke")
+      .name("Show Shape Stroke");
+    this.folders.shape
+      .add(ParamsManager.params, "pathShapeStrokeWeight", 0.1, 50)
+      .name("Shape Stroke Weight");
+    this.folders.shape
+      .add(ParamsManager.params, "shapeBlur", 0, 50)
+      .name("Shape Blur");
+    this.folders.shape
+      .add(ParamsManager.params, "insideBlur")
+      .name("Inside-Only Blur");
+    this.folders.shape
+      .add(ParamsManager.params, "shapeSize", 0.1, 2)
+      .name("Shape Size");
+  },
+
+  setupPathFolder() {
+    this.folders.path = this.gui.addFolder("Path");
+
+    this.folders.path
+      .add(ParamsManager.params, "showPath")
+      .name("Show Path Stroke");
+    this.folders.path
+      .add(ParamsManager.params, "fillPath")
+      .name("Show Path Fill");
+    this.folders.path
+      .add(ParamsManager.params, "pathBlur", 0, 50)
+      .name("Path Blur");
+    this.folders.path
+      .add(ParamsManager.params, "pathStrokeWeight", 0.1, 100)
+      .name("Path Stroke Weight");
+
+    this.folders.path
+      .add(ParamsManager.params, "pathType", [
+        "straight",
+        "curved",
+        "continuous",
+      ])
+      .name("Path Type");
+
+    this.folders.path
+      .add(ParamsManager.params, "selectedCells", 2, 50, 1)
+      .name("Number of Cells")
+      .onChange(() => {
+        // Regenerate path on cell count change
+        PathGenerator.generatePath();
+      });
+
+    let spacingController = this.folders.path
+      .add(ParamsManager.params, "pathShapeSpacing", 1, 500)
+      .name("Shape Spacing")
+      .onChange((value) => {
+        // Enforce minimum spacing if boolean union is active
+        if (ParamsManager.params.booleanUnion && value < 10) {
+          ParamsManager.params.pathShapeSpacing = 10;
+          spacingController.updateDisplay();
         }
-      }
-      updatePathCells();
-    });
-  gridFolder.add(params, "gridSize", 100, 1000).name("Grid Size");
-  gridFolder.add(params, "gridStrokeWeight", 0.1, 5).name("Grid Stroke Weight");
-  gridFolder.add(params, "gridBlur", 0, 20).name("Grid Blur"); // New slider for grid blur
+      });
 
-  // Shape folder
-  let shapeFolder = gui.addFolder("Shape");
-  shapeFolder
-    .add(params, "shapeType", ["rectangle", "ellipse"])
-    .name("Shape Type");
-  // Add the show shape toggle (moved from path folder)
-  shapeFolder.add(params, "showShape").name("Show Shape");
-  shapeFolder
-    .add(params, "booleanUnion")
-    .name("Boolean Union")
-    .onChange(function (value) {
-      if (value === true && params.pathShapeSpacing < 10) {
-        // Enforce minimum spacing for boolean union
-        params.pathShapeSpacing = 10;
+    this.folders.path
+      .add(ParamsManager.params, "alignShapesToGrid")
+      .name("Align Shapes to Grid");
+    this.folders.path
+      .add(ParamsManager.params, "curveAmount", 0, 1)
+      .name("Curvature");
+    this.folders.path
+      .add(ParamsManager.params, "constrainToGrid")
+      .name("Constrain to Grid");
+    this.folders.path
+      .add(ParamsManager.params, "closedLoop")
+      .name("Close Loop");
 
-        // Update the GUI slider for path shape spacing
-        for (let controller of pathFolder.__controllers) {
-          if (controller.property === "pathShapeSpacing") {
-            controller.updateDisplay();
-            break;
-          }
-        }
-      }
+    this.folders.path
+      .add(ParamsManager.params, "uniqueRowsCols")
+      .name("Unique Rows/Cols")
+      .onChange(() => {
+        // Regenerate path on unique rows/cols change
+        PathGenerator.generatePath();
+      });
 
-      // Enable/disable insideBlur toggle based on boolean union state
-      for (let controller of shapeFolder.__controllers) {
-        if (controller.property === "insideBlur") {
-          controller.domElement.parentElement.style.pointerEvents = value
-            ? "auto"
-            : "none";
-          controller.domElement.parentElement.style.opacity = value
-            ? "1"
-            : "0.5";
+    this.folders.path
+      .add(ParamsManager.params, "pathDirection", ["any", "90", "45", "90+45"])
+      .name("Path Direction")
+      .onChange(() => {
+        // Regenerate path on direction change
+        PathGenerator.generatePath();
+      });
 
-          // If turning off boolean union, also turn off insideBlur
-          if (!value && params.insideBlur) {
-            params.insideBlur = false;
-            controller.updateDisplay();
-          }
-          break;
-        }
-      }
-    });
-  shapeFolder
-    .add(params, "ellipseResolution", 8, 32, 1)
-    .name("Ellipse Resolution");
-  shapeFolder.add(params, "positionNoise", 0, 50).name("Position Noise");
-  shapeFolder.add(params, "sizeNoise", 0, 1, 0.1).name("Size Noise");
-  shapeFolder
-    .add(params, "shapeCornerRadius", 0, 50)
-    .name("Shape Corner Radius");
-  shapeFolder.add(params, "showPathShapeStroke").name("Show Shape Stroke");
-  shapeFolder
-    .add(params, "pathShapeStrokeWeight", 0.1, 50)
-    .name("Shape Stroke Weight");
-  shapeFolder.add(params, "shapeBlur", 0, 50).name("Shape Blur");
-  let insideBlurController = shapeFolder
-    .add(params, "insideBlur")
-    .name("Inside-Only Blur");
-  shapeFolder.add(params, "shapeSize", 0.1, 2).name("Shape Size");
+    this.folders.path
+      .add(ParamsManager.params, "includeSides")
+      .name("Side Connections")
+      .onChange(() => {
+        // Regenerate path on side connections change
+        PathGenerator.generatePath();
+      });
 
-  // Path folder
-  let pathFolder = gui.addFolder("Path");
-  // Add new toggle for showing path line
-  pathFolder.add(params, "showPath").name("Show Path Stroke");
-  pathFolder.add(params, "fillPath").name("Show Path Fill"); // Add toggle for filling the path
-  pathFolder.add(params, "pathBlur", 0, 50).name("Path Blur");
-  pathFolder
-    .add(params, "pathStrokeWeight", 0.1, 100)
-    .name("Path Stroke Weight"); // Add path stroke weight slider
-  pathFolder
-    .add(params, "pathType", ["straight", "curved", "continuous"])
-    .name("Path Type");
-  pathFolder
-    .add(params, "selectedCells", 2, 50, 1)
-    .name("Number of Cells")
-    .onChange(updatePathCells);
-  let spacingController = pathFolder
-    .add(params, "pathShapeSpacing", 1, 500)
-    .name("Shape Spacing")
-    .onChange(function (value) {
-      // If boolean union is active, enforce minimum spacing of 10
-      if (params.booleanUnion && value < 10) {
-        params.pathShapeSpacing = 10;
-        spacingController.updateDisplay();
-      }
-    });
-  pathFolder.add(params, "alignShapesToGrid").name("Align Shapes to Grid");
-  //  .onChange(updatePathCells);
-  pathFolder.add(params, "curveAmount", 0, 1).name("Curvature");
-  pathFolder.add(params, "constrainToGrid").name("Constrain to Grid");
-  pathFolder.add(params, "closedLoop").name("Close Loop");
-  pathFolder
-    .add(params, "uniqueRowsCols")
-    .name("Unique Rows/Cols")
-    .onChange(updatePathCells);
-  pathFolder
-    .add(params, "pathDirection", ["any", "90", "45", "90+45"])
-    .name("Path Direction")
-    .onChange(updatePathCells);
-  pathFolder
-    .add(params, "includeSides")
-    .name("Side Connections")
-    .onChange(updatePathCells);
-  pathFolder.add(params, "pathCornerRadius", 0, 50).name("Path Corner Radius");
-  pathFolder
-    .add(params, "pathStrokeCap", ["round", "square", "project"])
-    .name("Path Stroke Cap");
-  pathFolder
-    .add(params, "pathStrokeJoin", ["miter", "round", "bevel"])
-    .name("Path Stroke Join");
+    this.folders.path
+      .add(ParamsManager.params, "pathCornerRadius", 0, 50)
+      .name("Path Corner Radius");
 
-  // Color folder
-  let colorFolder = gui.addFolder("Colors");
-  colorFolder.addColor(params, "backgroundColor").name("Background Color");
-  colorFolder.addColor(params, "gridColor").name("Grid Color");
-  colorFolder.addColor(params, "shapeStrokeColor").name("Shape Stroke Color");
-  colorFolder.addColor(params, "pathStrokeColor").name("Path Stroke Color");
-  colorFolder.addColor(params, "pathFillColor").name("Path Fill Color");
-  colorFolder.add(params, "showFill").name("Show Shape Fill");
-  colorFolder
-    .add(params, "shapeAlpha", 0, 1)
-    .step(0.01)
-    .name("Shape Transparency");
-  colorFolder
-    .add(params, "gradientType", [
-      "none",
-      "horizontal",
-      "vertical",
-      "length",
-      "radial",
-      "diagonal",
-      "conic",
-    ])
-    .name("Gradient Type");
-  colorFolder.add(params, "gradientColors", ["2", "3"]).name("Gradient Colors");
-  colorFolder.addColor(params, "shapeFillColor").name("Shape Fill Color 1");
-  colorFolder.addColor(params, "shapeFillColor2").name("Shape Fill Color 2");
-  colorFolder.addColor(params, "shapeFillColor3").name("Shape Fill Color 3");
+    this.folders.path
+      .add(ParamsManager.params, "pathStrokeCap", [
+        "round",
+        "square",
+        "project",
+      ])
+      .name("Path Stroke Cap");
 
-  // Open folders
-  gridFolder.open();
-  shapeFolder.open();
-  colorFolder.open();
-  pathFolder.open();
-}
+    this.folders.path
+      .add(ParamsManager.params, "pathStrokeJoin", ["miter", "round", "bevel"])
+      .name("Path Stroke Join");
+  },
 
-// Add a new function to handle style changes
-function applyShapeStyle(style) {
-  // Save current controllers to update later
-  let controllers = {
-    showShape: null,
-    showPath: null,
-    pathBlur: null,
-    pathStrokeWeight: null,
-    pathType: null,
-    curveAmount: null,
-    pathStrokeCap: null,
-    pathStrokeJoin: null,
-    selectedCells: null,
-    booleanUnion: null,
-    shapeCornerRadius: null,
-    showPathShapeStroke: null,
-    pathShapeStrokeWeight: null,
-    shapeBlur: null,
-    insideBlur: null,
-    shapeSize: null,
-    alignShapesToGrid: null,
-    shapeType: null,
-    positionNoise: null,
-    sizeNoise: null,
-    gradientType: null,
-    gradientColors: null,
-  };
+  setupColorFolder() {
+    this.folders.color = this.gui.addFolder("Colors");
 
-  // Find all controllers we need to update
-  for (let folder in gui.__folders) {
-    for (let controller of gui.__folders[folder].__controllers) {
-      if (controllers.hasOwnProperty(controller.property)) {
-        controllers[controller.property] = controller;
+    this.folders.color
+      .addColor(ParamsManager.params, "backgroundColor")
+      .name("Background Color");
+    this.folders.color
+      .addColor(ParamsManager.params, "gridColor")
+      .name("Grid Color");
+    this.folders.color
+      .addColor(ParamsManager.params, "shapeStrokeColor")
+      .name("Shape Stroke Color");
+    this.folders.color
+      .addColor(ParamsManager.params, "pathStrokeColor")
+      .name("Path Stroke Color");
+    this.folders.color
+      .addColor(ParamsManager.params, "pathFillColor")
+      .name("Path Fill Color");
+    this.folders.color
+      .add(ParamsManager.params, "showFill")
+      .name("Show Shape Fill");
+    this.folders.color
+      .add(ParamsManager.params, "shapeAlpha", 0, 1)
+      .step(0.01)
+      .name("Shape Transparency");
+
+    this.folders.color
+      .add(ParamsManager.params, "gradientType", [
+        "none",
+        "horizontal",
+        "vertical",
+        "length",
+        "radial",
+        "diagonal",
+        "conic",
+      ])
+      .name("Gradient Type");
+
+    this.folders.color
+      .add(ParamsManager.params, "gradientColors", ["2", "3"])
+      .name("Gradient Colors");
+    this.folders.color
+      .addColor(ParamsManager.params, "shapeFillColor")
+      .name("Shape Fill Color 1");
+    this.folders.color
+      .addColor(ParamsManager.params, "shapeFillColor2")
+      .name("Shape Fill Color 2");
+    this.folders.color
+      .addColor(ParamsManager.params, "shapeFillColor3")
+      .name("Shape Fill Color 3");
+  },
+
+  updateAllControllers() {
+    // Update all controllers to reflect current parameter values
+    for (let folder in this.gui.__folders) {
+      for (let controller of this.gui.__folders[folder].__controllers) {
+        controller.updateDisplay();
       }
     }
-  }
-
-  // First reset to default values for all parameters
-  // This ensures no settings from previous styles remain
-  for (const key in defaultParams) {
-    if (
-      params.hasOwnProperty(key) &&
-      typeof defaultParams[key] !== "function"
-    ) {
-      params[key] = defaultParams[key];
-    }
-  }
-
-  // Apply the selected style
-  if (style === "paint") {
-    params.showShape = false;
-    params.showPath = true;
-    params.pathBlur = 10;
-    params.pathStrokeWeight = 75;
-    params.pathType = "curved";
-    params.curveAmount = 0.05;
-    params.pathStrokeCap = "round";
-    params.pathStrokeJoin = "round";
-    params.selectedCells = 10;
-  } else if (style === "grid") {
-    params.booleanUnion = true;
-    params.shapeCornerRadius = 20;
-    params.showPathShapeStroke = true;
-    params.pathShapeStrokeWeight = 30;
-    params.shapeBlur = 15;
-    params.insideBlur = true;
-    params.shapeSize = 1.1;
-    params.alignShapesToGrid = true;
-  } else if (style === "pixel") {
-    params.booleanUnion = true;
-    params.positionNoise = 10;
-    params.sizeNoise = 0.5;
-    params.showPathShapeStroke = true;
-    params.pathShapeStrokeWeight = 5;
-    params.selectedCells = 8;
-    params.shapeSize = 0.5;
-  } else if (style === "pipe") {
-    params.shapeType = "ellipse";
-    params.selectedCells = 8;
-    params.gradientType = "diagonal";
-  } else if (style === "cloud") {
-    params.shapeType = "ellipse";
-    params.booleanUnion = true;
-    params.positionNoise = 50;
-    params.sizeNoise = 0.5;
-    params.showPathShapeStroke = true;
-    params.pathShapeStrokeWeight = 20;
-    params.shapeBlur = 10;
-    params.insideBlur = true;
-    params.shapeSize = 0.8;
-  } else if (style === "bubbles") {
-    params.shapeType = "ellipse";
-    params.positionNoise = 50;
-    params.sizeNoise = 0.5;
-    params.showPathShapeStroke = true;
-    params.shapeSize = 0.2;
-    params.pathType = "curved";
-    params.curveAmount = 0.1;
-    params.pathShapeSpacing = 2;
-    params.gradientType = "radial";
-    params.gradientColors = "3";
-  } else if (style === "smoke") {
-    params.selectedCells = 7;
-    params.pathType = "curved";
-    params.curveAmount = 0.3;
-    params.shapeAlpha = 0.03;
-    params.gradientType = "conic";
-  } else if (style === "square") {
-    params.shapeSize = 0.9;
-    params.selectedCells = 15;
-    params.pathDirection = "90";
-    params.gradientType = "horizontal";
-  }
-
-  // Update all controllers to reflect the new values
-  for (let prop in controllers) {
-    if (controllers[prop]) {
-      controllers[prop].updateDisplay();
-    }
-  }
-  // Regenerate the path after changing style settings
-  updatePathCells();
-}
+  },
+};
 
 function draw() {
   // Check if we should use transparent background
@@ -504,47 +1128,56 @@ function draw() {
     clear();
   } else {
     // Regular opaque background
-    background(params.backgroundColor);
+    background(ParamsManager.params.backgroundColor);
   }
 
-  translate((width - params.gridSize) / 2, (height - params.gridSize) / 2);
+  translate(
+    (width - ParamsManager.params.gridSize) / 2,
+    (height - ParamsManager.params.gridSize) / 2
+  );
 
-  if (params.showGrid && !params.gridOnTop) {
+  if (ParamsManager.params.showGrid && !ParamsManager.params.gridOnTop) {
     drawGrid();
   }
 
   // Draw the path and shapes as needed
-  if (params.showShape || params.showPath || params.fillPath) {
+  if (
+    ParamsManager.params.showShape ||
+    ParamsManager.params.showPath ||
+    ParamsManager.params.fillPath
+  ) {
     drawPath();
   }
 
-  if (params.showGrid && params.gridOnTop) {
+  if (ParamsManager.params.showGrid && ParamsManager.params.gridOnTop) {
     drawGrid();
   }
 }
 
 // Updated grid drawing function with blur
 function drawGrid() {
-  if (params.gridBlur > 0) {
+  if (ParamsManager.params.gridBlur > 0) {
     push();
     drawingContext.filter = `blur(${params.gridBlur}px)`;
   }
 
-  stroke(params.gridColor);
-  strokeWeight(params.gridStrokeWeight);
+  stroke(ParamsManager.params.gridColor);
+  strokeWeight(ParamsManager.params.gridStrokeWeight);
   noFill();
 
-  let cellWidth = params.gridSize / params.gridWidth;
-  let cellHeight = params.gridSize / params.gridHeight;
+  let cellWidth =
+    ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
+  let cellHeight =
+    ParamsManager.params.gridSize / ParamsManager.params.gridHeight;
 
-  for (let i = 0; i <= params.gridHeight; i++) {
-    line(0, i * cellHeight, params.gridSize, i * cellHeight);
+  for (let i = 0; i <= ParamsManager.params.gridHeight; i++) {
+    line(0, i * cellHeight, ParamsManager.params.gridSize, i * cellHeight);
   }
-  for (let j = 0; j <= params.gridWidth; j++) {
-    line(j * cellWidth, 0, j * cellWidth, params.gridSize);
+  for (let j = 0; j <= ParamsManager.params.gridWidth; j++) {
+    line(j * cellWidth, 0, j * cellWidth, ParamsManager.params.gridSize);
   }
 
-  if (params.gridBlur > 0) {
+  if (ParamsManager.params.gridBlur > 0) {
     drawingContext.filter = "none";
     pop();
   }
@@ -552,13 +1185,13 @@ function drawGrid() {
 
 function drawPath() {
   // Draw the path line if either stroke or fill is enabled
-  if (params.showPath || params.fillPath) {
+  if (ParamsManager.params.showPath || ParamsManager.params.fillPath) {
     drawPathLine();
   }
 
   // Draw the shapes if enabled
-  if (params.showShape) {
-    if (params.booleanUnion && polybool) {
+  if (ParamsManager.params.showShape) {
+    if (ParamsManager.params.booleanUnion && polybool) {
       drawBooleanUnionPath();
     } else {
       drawRegularPath();
@@ -568,23 +1201,27 @@ function drawPath() {
 
 // New function to draw just the path line
 function drawPathLine() {
-  let numSegments = params.closedLoop ? pathCells.length : pathCells.length - 1;
-  let cellWidth = params.gridSize / params.gridWidth;
-  let cellHeight = params.gridSize / params.gridHeight;
+  let numSegments = ParamsManager.params.closedLoop
+    ? pathCells.length
+    : pathCells.length - 1;
+  let cellWidth =
+    ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
+  let cellHeight =
+    ParamsManager.params.gridSize / ParamsManager.params.gridHeight;
 
   // Apply blur if enabled
-  if (params.pathBlur > 0) {
+  if (ParamsManager.params.pathBlur > 0) {
     push();
-    drawingContext.filter = `blur(${params.pathBlur}px)`;
+    drawingContext.filter = `blur(${ParamsManager.params.pathBlur}px)`;
   }
 
   // Set stroke and fill independently based on toggles
-  if (params.showPath) {
-    stroke(params.pathStrokeColor);
-    strokeWeight(params.pathStrokeWeight);
+  if (ParamsManager.params.showPath) {
+    stroke(ParamsManager.params.pathStrokeColor);
+    strokeWeight(ParamsManager.params.pathStrokeWeight);
 
     // Apply the selected stroke cap style
-    switch (params.pathStrokeCap) {
+    switch (ParamsManager.params.pathStrokeCap) {
       case "round":
         strokeCap(ROUND);
         break;
@@ -598,7 +1235,7 @@ function drawPathLine() {
     }
 
     // Apply the selected stroke join style
-    switch (params.pathStrokeJoin) {
+    switch (ParamsManager.params.pathStrokeJoin) {
       case "round":
         strokeJoin(ROUND);
         break;
@@ -615,24 +1252,27 @@ function drawPathLine() {
   }
 
   // Set fill independently of stroke
-  if (params.fillPath) {
-    fill(params.pathFillColor);
+  if (ParamsManager.params.fillPath) {
+    fill(ParamsManager.params.pathFillColor);
   } else {
     noFill(); // Don't show fill if fillPath is false
   }
 
   // Only proceed with drawing if either stroke or fill is enabled
-  if (!params.showPath && !params.fillPath) {
+  if (!ParamsManager.params.showPath && !ParamsManager.params.fillPath) {
     return; // Skip drawing if both stroke and fill are disabled
   }
 
   // For paths with corner radius, we need to use a custom drawing approach
-  if (params.pathCornerRadius > 0 && params.pathType !== "curved") {
+  if (
+    ParamsManager.params.pathCornerRadius > 0 &&
+    ParamsManager.params.pathType !== "curved"
+  ) {
     // Draw path with rounded corners
     drawPathWithRoundedCorners(cellWidth, cellHeight);
   } else {
     // Original path drawing code
-    if (params.pathType === "curved") {
+    if (ParamsManager.params.pathType === "curved") {
       beginShape();
 
       for (let i = 0; i < pathCells.length; i++) {
@@ -653,10 +1293,10 @@ function drawPathLine() {
         // Calculate control points for curves
         let midX = (prevX + x) / 2;
         let midY = (prevY + y) / 2;
-        let perpX = -(y - prevY) * params.curveAmount;
-        let perpY = (x - prevX) * params.curveAmount;
+        let perpX = -(y - prevY) * ParamsManager.params.curveAmount;
+        let perpY = (x - prevX) * ParamsManager.params.curveAmount;
 
-        if (params.constrainToGrid) {
+        if (ParamsManager.params.constrainToGrid) {
           // Use the same constraint logic as in drawPathSegment
           function wouldCurveGoOutside(cpx, cpy) {
             let steps = 10;
@@ -669,9 +1309,9 @@ function drawPathLine() {
               let halfHeight = cellHeight / 2;
               if (
                 bx - halfWidth < 0 ||
-                bx + halfWidth > params.gridSize ||
+                bx + halfWidth > ParamsManager.params.gridSize ||
                 by - halfHeight < 0 ||
-                by + halfHeight > params.gridSize
+                by + halfHeight > ParamsManager.params.gridSize
               ) {
                 return true;
               }
@@ -689,7 +1329,7 @@ function drawPathLine() {
             let minAmount = 0;
             let maxAmount = 1;
             let iterations = 6;
-            let safeAmount = params.curveAmount;
+            let safeAmount = ParamsManager.params.curveAmount;
 
             for (let s = 0; s < iterations; s++) {
               let testAmount = (minAmount + maxAmount) / 2;
@@ -712,8 +1352,8 @@ function drawPathLine() {
 
           if (standardOutside && invertedOutside) {
             let safeAmount = findSafeCurveAmount(perpX, perpY, midX, midY);
-            perpX *= safeAmount / params.curveAmount;
-            perpY *= safeAmount / params.curveAmount;
+            perpX *= safeAmount / ParamsManager.params.curveAmount;
+            perpY *= safeAmount / ParamsManager.params.curveAmount;
           } else if (standardOutside) {
             perpX *= -1;
             perpY *= -1;
@@ -732,7 +1372,7 @@ function drawPathLine() {
       }
 
       // Close the loop if needed
-      if (params.closedLoop) {
+      if (ParamsManager.params.closedLoop) {
         let firstCell = pathCells[0];
         let lastCell = pathCells[pathCells.length - 1];
         let firstX = firstCell.j * cellWidth + cellWidth / 2;
@@ -742,11 +1382,11 @@ function drawPathLine() {
 
         let midX = (lastX + firstX) / 2;
         let midY = (lastY + firstY) / 2;
-        let perpX = -(firstY - lastY) * params.curveAmount;
-        let perpY = (firstX - lastX) * params.curveAmount;
+        let perpX = -(firstY - lastY) * ParamsManager.params.curveAmount;
+        let perpY = (firstX - lastX) * ParamsManager.params.curveAmount;
 
         // Apply constraints to the closing segment if needed
-        if (params.constrainToGrid) {
+        if (ParamsManager.params.constrainToGrid) {
           // Reuse the same constraint functions defined above
           function wouldCurveGoOutside(cpx, cpy) {
             let steps = 10;
@@ -759,9 +1399,9 @@ function drawPathLine() {
               let halfHeight = cellHeight / 2;
               if (
                 bx - halfWidth < 0 ||
-                bx + halfWidth > params.gridSize ||
+                bx + halfWidth > ParamsManager.params.gridSize ||
                 by - halfHeight < 0 ||
-                by + halfHeight > params.gridSize
+                by + halfHeight > ParamsManager.params.gridSize
               ) {
                 return true;
               }
@@ -779,7 +1419,7 @@ function drawPathLine() {
             let minAmount = 0;
             let maxAmount = 1;
             let iterations = 6;
-            let safeAmount = params.curveAmount;
+            let safeAmount = ParamsManager.params.curveAmount;
 
             for (let s = 0; s < iterations; s++) {
               let testAmount = (minAmount + maxAmount) / 2;
@@ -802,8 +1442,8 @@ function drawPathLine() {
 
           if (standardOutside && invertedOutside) {
             let safeAmount = findSafeCurveAmount(perpX, perpY, midX, midY);
-            perpX *= safeAmount / params.curveAmount;
-            perpY *= safeAmount / params.curveAmount;
+            perpX *= safeAmount / ParamsManager.params.curveAmount;
+            perpY *= safeAmount / ParamsManager.params.curveAmount;
           } else if (standardOutside) {
             perpX *= -1;
             perpY *= -1;
@@ -820,8 +1460,8 @@ function drawPathLine() {
         );
       }
 
-      endShape(params.closedLoop ? CLOSE : OPEN);
-    } else if (params.pathType === "continuous") {
+      endShape(ParamsManager.params.closedLoop ? CLOSE : OPEN);
+    } else if (ParamsManager.params.pathType === "continuous") {
       // For continuous path, draw straight lines
       beginShape();
 
@@ -832,7 +1472,7 @@ function drawPathLine() {
         vertex(x, y);
       }
 
-      if (params.closedLoop) {
+      if (ParamsManager.params.closedLoop) {
         endShape(CLOSE);
       } else {
         endShape();
@@ -848,7 +1488,7 @@ function drawPathLine() {
         vertex(x, y);
       }
 
-      if (params.closedLoop) {
+      if (ParamsManager.params.closedLoop) {
         endShape(CLOSE);
       } else {
         endShape();
@@ -857,7 +1497,7 @@ function drawPathLine() {
   }
 
   // Reset filter if blur was applied
-  if (params.pathBlur > 0) {
+  if (ParamsManager.params.pathBlur > 0) {
     drawingContext.filter = "none";
     pop();
   }
@@ -876,7 +1516,7 @@ function drawPathWithRoundedCorners(cellWidth, cellHeight) {
   });
 
   // For closed loop, add first point again at the end
-  if (params.closedLoop) {
+  if (ParamsManager.params.closedLoop) {
     points.push({
       x: points[0].x,
       y: points[0].y,
@@ -913,7 +1553,7 @@ function drawPathWithRoundedCorners(cellWidth, cellHeight) {
     let n2 = { x: v2.x / len2, y: v2.y / len2 };
 
     // Calculate corner radius (constrained by segment lengths)
-    let radius = min(params.pathCornerRadius, len1 / 2, len2 / 2);
+    let radius = min(ParamsManager.params.pathCornerRadius, len1 / 2, len2 / 2);
 
     // Calculate points before and after the corner
     let beforeCorner = {
@@ -938,19 +1578,23 @@ function drawPathWithRoundedCorners(cellWidth, cellHeight) {
     vertex(points[points.length - 1].x, points[points.length - 1].y);
   }
 
-  endShape(params.closedLoop ? CLOSE : OPEN);
+  endShape(ParamsManager.params.closedLoop ? CLOSE : OPEN);
 }
 
 function drawRegularPath() {
-  let numSegments = params.closedLoop ? pathCells.length : pathCells.length - 1;
+  let numSegments = ParamsManager.params.closedLoop
+    ? pathCells.length
+    : pathCells.length - 1;
   let totalLength = 0;
 
   // Calculate total path length
   for (let i = 0; i < numSegments; i++) {
     let currentCell = pathCells[i];
     let nextCell = pathCells[(i + 1) % pathCells.length];
-    let cellWidth = params.gridSize / params.gridWidth;
-    let cellHeight = params.gridSize / params.gridHeight;
+    let cellWidth =
+      ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
+    let cellHeight =
+      ParamsManager.params.gridSize / ParamsManager.params.gridHeight;
     let x1 = currentCell.j * cellWidth + cellWidth / 2;
     let y1 = currentCell.i * cellHeight + cellHeight / 2;
     let x2 = nextCell.j * cellWidth + cellWidth / 2;
@@ -962,8 +1606,10 @@ function drawRegularPath() {
   for (let i = 0; i < numSegments; i++) {
     let currentCell = pathCells[i];
     let nextCell = pathCells[(i + 1) % pathCells.length];
-    let cellWidth = params.gridSize / params.gridWidth;
-    let cellHeight = params.gridSize / params.gridHeight;
+    let cellWidth =
+      ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
+    let cellHeight =
+      ParamsManager.params.gridSize / ParamsManager.params.gridHeight;
     let x1 = currentCell.j * cellWidth + cellWidth / 2;
     let y1 = currentCell.i * cellHeight + cellHeight / 2;
     let x2 = nextCell.j * cellWidth + cellWidth / 2;
@@ -994,8 +1640,8 @@ function drawBooleanUnionPath() {
   }
 
   // Enforce minimum spacing for boolean union operations
-  if (params.pathShapeSpacing < 10) {
-    params.pathShapeSpacing = 10;
+  if (ParamsManager.params.pathShapeSpacing < 10) {
+    ParamsManager.params.pathShapeSpacing = 10;
     // Update GUI if available
     if (gui) {
       for (let controller of gui.__folders.Path.__controllers) {
@@ -1045,15 +1691,19 @@ function isValidPolygon(polygon) {
 
 function collectAllShapes() {
   let shapes = [];
-  let numSegments = params.closedLoop ? pathCells.length : pathCells.length - 1;
+  let numSegments = ParamsManager.params.closedLoop
+    ? pathCells.length
+    : pathCells.length - 1;
   let totalLength = 0;
 
   // Calculate total path length
   for (let i = 0; i < numSegments; i++) {
     let currentCell = pathCells[i];
     let nextCell = pathCells[(i + 1) % pathCells.length];
-    let cellWidth = params.gridSize / params.gridWidth;
-    let cellHeight = params.gridSize / params.gridHeight;
+    let cellWidth =
+      ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
+    let cellHeight =
+      ParamsManager.params.gridSize / ParamsManager.params.gridHeight;
     let x1 = currentCell.j * cellWidth + cellWidth / 2;
     let y1 = currentCell.i * cellHeight + cellHeight / 2;
     let x2 = nextCell.j * cellWidth + cellWidth / 2;
@@ -1065,8 +1715,10 @@ function collectAllShapes() {
   for (let i = 0; i < numSegments; i++) {
     let currentCell = pathCells[i];
     let nextCell = pathCells[(i + 1) % pathCells.length];
-    let cellWidth = params.gridSize / params.gridWidth;
-    let cellHeight = params.gridSize / params.gridHeight;
+    let cellWidth =
+      ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
+    let cellHeight =
+      ParamsManager.params.gridSize / ParamsManager.params.gridHeight;
     let x1 = currentCell.j * cellWidth + cellWidth / 2;
     let y1 = currentCell.i * cellHeight + cellHeight / 2;
     let x2 = nextCell.j * cellWidth + cellWidth / 2;
@@ -1102,10 +1754,12 @@ function collectShapesFromSegment(
   totalLength
 ) {
   let shapes = [];
-  let cellWidth = params.gridSize / params.gridWidth;
-  let cellHeight = params.gridSize / params.gridHeight;
+  let cellWidth =
+    ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
+  let cellHeight =
+    ParamsManager.params.gridSize / ParamsManager.params.gridHeight;
 
-  if (params.alignShapesToGrid) {
+  if (ParamsManager.params.alignShapesToGrid) {
     // Find all grid cells that the line segment intersects with
     let gridCells = getIntersectingGridCells(x1, y1, x2, y2);
 
@@ -1130,21 +1784,21 @@ function collectShapesFromSegment(
         progress,
         totalSegments,
         segmentIndex,
-        cell.i * params.gridWidth + cell.j // Use cell index as step index
+        cell.i * ParamsManager.params.gridWidth + cell.j // Use cell index as step index
       );
       if (shape) shapes.push(shape);
     }
   } else {
     // Original shape collection logic
-    if (params.pathType === "curved") {
+    if (ParamsManager.params.pathType === "curved") {
       let midX = (x1 + x2) / 2;
       let midY = (y1 + y2) / 2;
-      let perpX = -(y2 - y1) * params.curveAmount;
-      let perpY = (x2 - x1) * params.curveAmount;
+      let perpX = -(y2 - y1) * ParamsManager.params.curveAmount;
+      let perpY = (x2 - x1) * ParamsManager.params.curveAmount;
 
       // Fix for curved paths in boolean union mode
       // Use the exact same control points and curve calculations as in drawPathSegment
-      if (params.constrainToGrid) {
+      if (ParamsManager.params.constrainToGrid) {
         let standardOutside = false;
         let invertedOutside = false;
 
@@ -1160,9 +1814,9 @@ function collectShapesFromSegment(
             let halfHeight = cellHeight / 2;
             if (
               x - halfWidth < 0 ||
-              x + halfWidth > params.gridSize ||
+              x + halfWidth > ParamsManager.params.gridSize ||
               y - halfHeight < 0 ||
-              y + halfHeight > params.gridSize
+              y + halfHeight > ParamsManager.params.gridSize
             ) {
               return true;
             }
@@ -1175,7 +1829,7 @@ function collectShapesFromSegment(
           let minAmount = 0;
           let maxAmount = 1;
           let iterations = 6;
-          let safeAmount = params.curveAmount;
+          let safeAmount = ParamsManager.params.curveAmount;
 
           for (let i = 0; i < iterations; i++) {
             let testAmount = (minAmount + maxAmount) / 2;
@@ -1198,15 +1852,16 @@ function collectShapesFromSegment(
 
         if (standardOutside && invertedOutside) {
           let safeAmount = findSafeCurveAmount(perpX, perpY, midX, midY);
-          perpX *= safeAmount / params.curveAmount;
-          perpY *= safeAmount / params.curveAmount;
+          perpX *= safeAmount / ParamsManager.params.curveAmount;
+          perpY *= safeAmount / ParamsManager.params.curveAmount;
         } else if (standardOutside) {
           perpX *= -1;
           perpY *= -1;
         }
       }
 
-      let steps = floor(dist(x1, y1, x2, y2) / params.pathShapeSpacing) * 2;
+      let steps =
+        floor(dist(x1, y1, x2, y2) / ParamsManager.params.pathShapeSpacing) * 2;
       steps = max(1, steps); // Ensure at least one step
 
       for (let i = 0; i <= steps; i++) {
@@ -1238,7 +1893,7 @@ function collectShapesFromSegment(
         );
         if (shape) shapes.push(shape);
       }
-    } else if (params.pathType === "continuous") {
+    } else if (ParamsManager.params.pathType === "continuous") {
       let prevCell =
         pathCells[(segmentIndex - 1 + pathCells.length) % pathCells.length];
       let nextNextCell = pathCells[(segmentIndex + 2) % pathCells.length];
@@ -1246,7 +1901,7 @@ function collectShapesFromSegment(
 
       // Calculate distance for number of shapes
       let distance = dist(x1, y1, x2, y2);
-      let numShapes = floor(distance / params.pathShapeSpacing);
+      let numShapes = floor(distance / ParamsManager.params.pathShapeSpacing);
       numShapes = max(1, numShapes);
 
       for (let i = 0; i <= numShapes; i++) {
@@ -1281,7 +1936,7 @@ function collectShapesFromSegment(
     } else {
       // Straight path
       let distance = dist(x1, y1, x2, y2);
-      let numShapes = floor(distance / params.pathShapeSpacing);
+      let numShapes = floor(distance / ParamsManager.params.pathShapeSpacing);
       numShapes = max(1, numShapes); // Ensure at least one step
 
       for (let i = 0; i <= numShapes; i++) {
@@ -1329,8 +1984,10 @@ function drawPathSegment(
   accumulatedLength,
   totalLength
 ) {
-  let cellWidth = params.gridSize / params.gridWidth;
-  let cellHeight = params.gridSize / params.gridHeight;
+  let cellWidth =
+    ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
+  let cellHeight =
+    ParamsManager.params.gridSize / ParamsManager.params.gridHeight;
 
   function wouldCurveGoOutside(cpx, cpy) {
     let steps = 10;
@@ -1343,9 +2000,9 @@ function drawPathSegment(
       let halfHeight = cellHeight / 2;
       if (
         x - halfWidth < 0 ||
-        x + halfWidth > params.gridSize ||
+        x + halfWidth > ParamsManager.params.gridSize ||
         y - halfHeight < 0 ||
-        y + halfHeight > params.gridSize
+        y + halfHeight > ParamsManager.params.gridSize
       ) {
         return true;
       }
@@ -1357,7 +2014,7 @@ function drawPathSegment(
     let minAmount = 0;
     let maxAmount = 1;
     let iterations = 6;
-    let safeAmount = params.curveAmount;
+    let safeAmount = ParamsManager.params.curveAmount;
 
     for (let i = 0; i < iterations; i++) {
       let testAmount = (minAmount + maxAmount) / 2;
@@ -1375,27 +2032,28 @@ function drawPathSegment(
     return safeAmount;
   }
 
-  if (params.pathType === "curved") {
+  if (ParamsManager.params.pathType === "curved") {
     let midX = (x1 + x2) / 2;
     let midY = (y1 + y2) / 2;
-    let perpX = -(y2 - y1) * params.curveAmount;
-    let perpY = (x2 - x1) * params.curveAmount;
+    let perpX = -(y2 - y1) * ParamsManager.params.curveAmount;
+    let perpY = (x2 - x1) * ParamsManager.params.curveAmount;
 
-    if (params.constrainToGrid) {
+    if (ParamsManager.params.constrainToGrid) {
       let standardOutside = wouldCurveGoOutside(midX + perpX, midY + perpY);
       let invertedOutside = wouldCurveGoOutside(midX - perpX, midY - perpY);
 
       if (standardOutside && invertedOutside) {
         let safeAmount = findSafeCurveAmount(perpX, perpY, midX, midY);
-        perpX *= safeAmount / params.curveAmount;
-        perpY *= safeAmount / params.curveAmount;
+        perpX *= safeAmount / ParamsManager.params.curveAmount;
+        perpY *= safeAmount / ParamsManager.params.curveAmount;
       } else if (standardOutside) {
         perpX *= -1;
         perpY *= -1;
       }
     }
 
-    let steps = floor(dist(x1, y1, x2, y2) / params.pathShapeSpacing) * 2;
+    let steps =
+      floor(dist(x1, y1, x2, y2) / ParamsManager.params.pathShapeSpacing) * 2;
     for (let i = 0; i <= steps; i++) {
       let t = i / steps;
       let x = bezierPoint(x1, midX + perpX, midX + perpX, x2, t);
@@ -1423,7 +2081,7 @@ function drawPathSegment(
         i // Pass the step index
       );
     }
-  } else if (params.pathType === "continuous") {
+  } else if (ParamsManager.params.pathType === "continuous") {
     let prevCell =
       pathCells[(segmentIndex - 1 + pathCells.length) % pathCells.length];
     let nextNextCell = pathCells[(segmentIndex + 2) % pathCells.length];
@@ -1434,7 +2092,7 @@ function drawPathSegment(
 
     // Calculate distance for number of shapes
     let distance = dist(x1, y1, x2, y2);
-    let numShapes = floor(distance / params.pathShapeSpacing);
+    let numShapes = floor(distance / ParamsManager.params.pathShapeSpacing);
     numShapes = max(1, numShapes);
 
     for (let i = 0; i <= numShapes; i++) {
@@ -1467,7 +2125,7 @@ function drawPathSegment(
   } else {
     // Straight path
     let distance = dist(x1, y1, x2, y2);
-    let numShapes = floor(distance / params.pathShapeSpacing);
+    let numShapes = floor(distance / ParamsManager.params.pathShapeSpacing);
     numShapes = max(1, numShapes); // Ensure at least one step
 
     for (let i = 0; i <= numShapes; i++) {
@@ -1498,7 +2156,7 @@ function drawPathSegment(
     }
   }
 
-  if (params.alignShapesToGrid) {
+  if (ParamsManager.params.alignShapesToGrid) {
     // Find all grid cells that the line segment intersects with
     let gridCells = getIntersectingGridCells(x1, y1, x2, y2);
 
@@ -1523,34 +2181,35 @@ function drawPathSegment(
         progress,
         totalSegments,
         segmentIndex,
-        cell.i * params.gridWidth + cell.j // Use cell index as step index
+        cell.i * ParamsManager.params.gridWidth + cell.j // Use cell index as step index
       );
     }
   }
 }
 
 function getIntersectingGridCells(x1, y1, x2, y2) {
-  let cellWidth = params.gridSize / params.gridWidth;
-  let cellHeight = params.gridSize / params.gridHeight;
+  let cellWidth =
+    ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
+  let cellHeight =
+    ParamsManager.params.gridSize / ParamsManager.params.gridHeight;
   let cells = [];
 
-  // Use Bresenham's line algorithm to find cells that the line passes through
-  // This is a simplified version for grid traversal
+  // Use a simplified version of Bresenham's line algorithm to find cells along the line
   let startCellI = Math.floor(y1 / cellHeight);
   let startCellJ = Math.floor(x1 / cellWidth);
   let endCellI = Math.floor(y2 / cellHeight);
   let endCellJ = Math.floor(x2 / cellWidth);
 
   // Clamp to grid bounds
-  startCellI = constrain(startCellI, 0, params.gridHeight - 1);
-  startCellJ = constrain(startCellJ, 0, params.gridWidth - 1);
-  endCellI = constrain(endCellI, 0, params.gridHeight - 1);
-  endCellJ = constrain(endCellJ, 0, params.gridWidth - 1);
+  startCellI = constrain(startCellI, 0, ParamsManager.params.gridHeight - 1);
+  startCellJ = constrain(startCellJ, 0, ParamsManager.params.gridWidth - 1);
+  endCellI = constrain(endCellI, 0, ParamsManager.params.gridHeight - 1);
+  endCellJ = constrain(endCellJ, 0, ParamsManager.params.gridWidth - 1);
 
   // Add start cell
   cells.push({ i: startCellI, j: startCellJ });
 
-  // If start and end are the same, just return the one cell
+  // If start and end are the same, return single cell
   if (startCellI === endCellI && startCellJ === endCellJ) {
     return cells;
   }
@@ -1565,11 +2224,12 @@ function getIntersectingGridCells(x1, y1, x2, y2) {
   let currentI = startCellI;
   let currentJ = startCellJ;
 
-  // Maximum number of steps to prevent infinite loops
-  let maxSteps = params.gridWidth * params.gridHeight;
+  // Maximum steps to prevent infinite loops
+  let maxSteps =
+    ParamsManager.params.gridWidth * ParamsManager.params.gridHeight;
   let steps = 0;
 
-  // Traverse the grid following the line
+  // Traverse the grid
   while ((currentI !== endCellI || currentJ !== endCellJ) && steps < maxSteps) {
     let e2 = 2 * err;
     if (e2 > -dy) {
@@ -1581,12 +2241,12 @@ function getIntersectingGridCells(x1, y1, x2, y2) {
       currentI += sy;
     }
 
-    // Add the current cell if it's within grid bounds
+    // Add cell if within bounds
     if (
       currentI >= 0 &&
-      currentI < params.gridHeight &&
+      currentI < ParamsManager.params.gridHeight &&
       currentJ >= 0 &&
-      currentJ < params.gridWidth
+      currentJ < ParamsManager.params.gridWidth
     ) {
       cells.push({ i: currentI, j: currentJ });
     }
@@ -1608,7 +2268,7 @@ function createShapePolygon(
   segmentIndex = 0,
   stepIndex = 0
 ) {
-  let scale = params.shapeSize;
+  let scale = ParamsManager.params.shapeSize;
 
   // Apply size noise - this is the missing part for boolean union shapes
   let sizeNoiseFactor = getSizeNoise(segmentIndex, stepIndex);
@@ -1624,7 +2284,7 @@ function createShapePolygon(
     return null;
   }
 
-  if (params.shapeType === "rectangle") {
+  if (ParamsManager.params.shapeType === "rectangle") {
     // Create rectangle with proper winding order (counter-clockwise)
     let points = [
       [x - halfWidth, y - halfHeight],
@@ -1640,7 +2300,7 @@ function createShapePolygon(
   } else {
     // Create ellipse as polygon approximation with configurable resolution
     let points = [];
-    let numPoints = params.ellipseResolution;
+    let numPoints = ParamsManager.params.ellipseResolution;
 
     // Ensure minimum resolution
     numPoints = Math.max(8, numPoints);
@@ -1678,8 +2338,8 @@ function drawUnifiedShape(unionResult) {
   let bounds = getUnionBounds({ regions: validRegions });
 
   // Apply full shape blur if enabled
-  if (params.shapeBlur > 0) {
-    if (params.insideBlur) {
+  if (ParamsManager.params.shapeBlur > 0) {
+    if (ParamsManager.params.insideBlur) {
       // Inside-only blur with mask for boolean union shapes
       let bounds = getUnionBounds({ regions: validRegions });
       let bufferSize = max(bounds.width, bounds.height) * 1.5;
@@ -1691,31 +2351,38 @@ function drawUnifiedShape(unionResult) {
       shapeBuffer.translate(-bounds.minX + offsetX, -bounds.minY + offsetY);
 
       // Apply blur filter
-      shapeBuffer.drawingContext.filter = `blur(${params.shapeBlur}px)`;
+      shapeBuffer.drawingContext.filter = `blur(${ParamsManager.params.shapeBlur}px)`;
 
       // Set appearance and draw shape in buffer
-      if (params.showPathShapeStroke) {
-        shapeBuffer.stroke(params.shapeStrokeColor);
-        shapeBuffer.strokeWeight(params.pathShapeStrokeWeight);
+      if (ParamsManager.params.showPathShapeStroke) {
+        shapeBuffer.stroke(ParamsManager.params.shapeStrokeColor);
+        shapeBuffer.strokeWeight(ParamsManager.params.pathShapeStrokeWeight);
       } else {
         shapeBuffer.noStroke();
       }
 
       // Handle fill
-      if (!params.showFill) {
+      if (!ParamsManager.params.showFill) {
         shapeBuffer.noFill();
       } else {
         // Apply solid fill (will handle gradient later)
-        let fillColor = color(params.shapeFillColor);
-        fillColor.setAlpha(params.shapeAlpha * 255);
+        let fillColor = color(ParamsManager.params.shapeFillColor);
+        fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
         shapeBuffer.fill(fillColor);
       }
 
       // Draw all regions into buffer WITH corner radius
       for (let region of validRegions) {
-        if (params.shapeCornerRadius > 0 && params.shapeType === "rectangle") {
+        if (
+          ParamsManager.params.shapeCornerRadius > 0 &&
+          ParamsManager.params.shapeType === "rectangle"
+        ) {
           // Draw with rounded corners using custom function
-          drawRoundedPolygon(shapeBuffer, region, params.shapeCornerRadius);
+          drawRoundedPolygon(
+            shapeBuffer,
+            region,
+            ParamsManager.params.shapeCornerRadius
+          );
         } else {
           // Standard polygon drawing
           shapeBuffer.beginShape();
@@ -1743,9 +2410,16 @@ function drawUnifiedShape(unionResult) {
 
       // Draw all regions into mask WITH THE SAME corner radius
       for (let region of validRegions) {
-        if (params.shapeCornerRadius > 0 && params.shapeType === "rectangle") {
+        if (
+          ParamsManager.params.shapeCornerRadius > 0 &&
+          ParamsManager.params.shapeType === "rectangle"
+        ) {
           // Draw with rounded corners using the same custom function
-          drawRoundedPolygon(maskBuffer, region, params.shapeCornerRadius);
+          drawRoundedPolygon(
+            maskBuffer,
+            region,
+            ParamsManager.params.shapeCornerRadius
+          );
         } else {
           // Standard polygon drawing
           maskBuffer.beginShape();
@@ -1805,43 +2479,43 @@ function drawUnifiedShape(unionResult) {
     } else {
       // Original full blur code
       push();
-      drawingContext.filter = `blur(${params.shapeBlur}px)`;
+      drawingContext.filter = `blur(${ParamsManager.params.shapeBlur}px)`;
 
       // Set up appearance
-      if (params.showPathShapeStroke) {
-        stroke(params.shapeStrokeColor);
-        strokeWeight(params.pathShapeStrokeWeight);
+      if (ParamsManager.params.showPathShapeStroke) {
+        stroke(ParamsManager.params.shapeStrokeColor);
+        strokeWeight(ParamsManager.params.pathShapeStrokeWeight);
       } else {
         noStroke();
       }
 
       // Handle fill based on showFill
-      if (!params.showFill) {
+      if (!ParamsManager.params.showFill) {
         noFill();
         // If neither stroke nor fill, exit early
-        if (!params.showPathShapeStroke) {
+        if (!ParamsManager.params.showPathShapeStroke) {
           pop();
           return;
         }
       } else {
         // Apply gradient or solid fill
-        if (params.gradientType === "none") {
-          let fillColor = color(params.shapeFillColor);
-          fillColor.setAlpha(params.shapeAlpha * 255);
+        if (ParamsManager.params.gradientType === "none") {
+          let fillColor = color(ParamsManager.params.shapeFillColor);
+          fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
           fill(fillColor);
-        } else if (params.gradientType === "length") {
+        } else if (ParamsManager.params.gradientType === "length") {
           // For boolean union, use middle color for length gradient
           let fillColor;
-          if (params.gradientColors === "2") {
+          if (ParamsManager.params.gradientColors === "2") {
             fillColor = lerpColor(
-              color(params.shapeFillColor),
-              color(params.shapeFillColor2),
+              color(ParamsManager.params.shapeFillColor),
+              color(ParamsManager.params.shapeFillColor2),
               0.5
             );
           } else {
-            fillColor = color(params.shapeFillColor2); // Use middle color
+            fillColor = color(ParamsManager.params.shapeFillColor2); // Use middle color
           }
-          fillColor.setAlpha(params.shapeAlpha * 255);
+          fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
           fill(fillColor);
         } else {
           // Use gradient with canvas context
@@ -1881,41 +2555,41 @@ function drawUnifiedShape(unionResult) {
   }
 
   // Apply stroke without blur (removed blur code)
-  if (params.showPathShapeStroke) {
+  if (ParamsManager.params.showPathShapeStroke) {
     // Normal stroke without blur
-    stroke(params.shapeStrokeColor);
-    strokeWeight(params.pathShapeStrokeWeight);
+    stroke(ParamsManager.params.shapeStrokeColor);
+    strokeWeight(ParamsManager.params.pathShapeStrokeWeight);
   } else {
     noStroke();
   }
 
   // Handle fill based on the showFill toggle
-  if (!params.showFill) {
+  if (!ParamsManager.params.showFill) {
     noFill();
 
     // If no stroke and no fill, exit early
-    if (!params.showPathShapeStroke) {
+    if (!ParamsManager.params.showPathShapeStroke) {
       return;
     }
   } else {
     // Apply gradient or solid color based on gradient type
-    if (params.gradientType === "none") {
-      let fillColor = color(params.shapeFillColor);
-      fillColor.setAlpha(params.shapeAlpha * 255);
+    if (ParamsManager.params.gradientType === "none") {
+      let fillColor = color(ParamsManager.params.shapeFillColor);
+      fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
       fill(fillColor);
-    } else if (params.gradientType === "length") {
+    } else if (ParamsManager.params.gradientType === "length") {
       // For boolean union, use middle color for length gradient
       let fillColor;
-      if (params.gradientColors === "2") {
+      if (ParamsManager.params.gradientColors === "2") {
         fillColor = lerpColor(
-          color(params.shapeFillColor),
-          color(params.shapeFillColor2),
+          color(ParamsManager.params.shapeFillColor),
+          color(ParamsManager.params.shapeFillColor2),
           0.5
         );
       } else {
-        fillColor = color(params.shapeFillColor2); // Use middle color
+        fillColor = color(ParamsManager.params.shapeFillColor2); // Use middle color
       }
-      fillColor.setAlpha(params.shapeAlpha * 255);
+      fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
       fill(fillColor);
     } else {
       // Use gradient with canvas context
@@ -1970,7 +2644,7 @@ function getUnionBounds(unionResult) {
 
 function createGradientForBounds(ctx, bounds) {
   let gradient;
-  switch (params.gradientType) {
+  switch (ParamsManager.params.gradientType) {
     case "horizontal":
       gradient = ctx.createLinearGradient(bounds.minX, 0, bounds.maxX, 0);
       break;
@@ -2005,37 +2679,47 @@ function createGradientForBounds(ctx, bounds) {
   }
 
   // Create colors with proper alpha value
-  let c1 = color(params.shapeFillColor);
-  let c2 = color(params.shapeFillColor2);
-  let c3 = color(params.shapeFillColor3);
+  let c1 = color(ParamsManager.params.shapeFillColor);
+  let c2 = color(ParamsManager.params.shapeFillColor2);
+  let c3 = color(ParamsManager.params.shapeFillColor3);
 
   // Apply alpha to all colors
-  c1.setAlpha(params.shapeAlpha * 255);
-  c2.setAlpha(params.shapeAlpha * 255);
-  c3.setAlpha(params.shapeAlpha * 255);
+  c1.setAlpha(ParamsManager.params.shapeAlpha * 255);
+  c2.setAlpha(ParamsManager.params.shapeAlpha * 255);
+  c3.setAlpha(ParamsManager.params.shapeAlpha * 255);
 
   // Add color stops with rgba format to preserve transparency
-  if (params.gradientColors === "2") {
+  if (ParamsManager.params.gradientColors === "2") {
     gradient.addColorStop(
       0,
-      `rgba(${red(c1)}, ${green(c1)}, ${blue(c1)}, ${params.shapeAlpha})`
+      `rgba(${red(c1)}, ${green(c1)}, ${blue(c1)}, ${
+        ParamsManager.params.shapeAlpha
+      })`
     );
     gradient.addColorStop(
       1,
-      `rgba(${red(c2)}, ${green(c2)}, ${blue(c2)}, ${params.shapeAlpha})`
+      `rgba(${red(c2)}, ${green(c2)}, ${blue(c2)}, ${
+        ParamsManager.params.shapeAlpha
+      })`
     );
   } else {
     gradient.addColorStop(
       0,
-      `rgba(${red(c1)}, ${green(c1)}, ${blue(c1)}, ${params.shapeAlpha})`
+      `rgba(${red(c1)}, ${green(c1)}, ${blue(c1)}, ${
+        ParamsManager.params.shapeAlpha
+      })`
     );
     gradient.addColorStop(
       0.5,
-      `rgba(${red(c2)}, ${green(c2)}, ${blue(c2)}, ${params.shapeAlpha})`
+      `rgba(${red(c2)}, ${green(c2)}, ${blue(c2)}, ${
+        ParamsManager.params.shapeAlpha
+      })`
     );
     gradient.addColorStop(
       1,
-      `rgba(${red(c3)}, ${green(c3)}, ${blue(c3)}, ${params.shapeAlpha})`
+      `rgba(${red(c3)}, ${green(c3)}, ${blue(c3)}, ${
+        ParamsManager.params.shapeAlpha
+      })`
     );
   }
 
@@ -2050,7 +2734,10 @@ function drawUnionWithContext(ctx, unionResult, strokeOnly = false) {
     ctx.beginPath();
 
     // For rounded corners in polygon regions
-    if (params.shapeCornerRadius > 0 && params.shapeType === "rectangle") {
+    if (
+      ParamsManager.params.shapeCornerRadius > 0 &&
+      ParamsManager.params.shapeType === "rectangle"
+    ) {
       // Get points for this region
       let points = region.filter(
         (point) =>
@@ -2076,7 +2763,10 @@ function drawUnionWithContext(ctx, unionResult, strokeOnly = false) {
       }
 
       // Limit the radius to prevent overlap on short edges
-      let maxRadius = Math.min(params.shapeCornerRadius, minEdgeLength * 0.4);
+      let maxRadius = Math.min(
+        ParamsManager.params.shapeCornerRadius,
+        minEdgeLength * 0.4
+      );
 
       // Start path at a reasonable position
       let startPoint = points[0];
@@ -2112,20 +2802,28 @@ function drawUnionWithContext(ctx, unionResult, strokeOnly = false) {
         let len1 = Math.sqrt(v1[0] * v1[0] + v1[1] * v1[1]);
         let len2 = Math.sqrt(v2[0] * v2[0] + v2[1] * v2[1]);
 
+        if (len1 === 0 || len2 === 0) {
+          ctx.lineTo(p1[0], p1[1]);
+          continue;
+        }
+
+        // Calculate unit vectors (normalized)
         let unitV1 = [v1[0] / len1, v1[1] / len1];
         let unitV2 = [v2[0] / len2, v2[1] / len2];
 
-        // Draw line to the point before the corner
+        // Calculate points before and after the corner
         let beforeCorner = [
           p1[0] - unitV1[0] * maxRadius,
           p1[1] - unitV1[1] * maxRadius,
         ];
 
-        // Calculate the point after the corner
         let afterCorner = [
           p1[0] + unitV2[0] * maxRadius,
           p1[1] + unitV2[1] * maxRadius,
         ];
+
+        // Draw line to point before corner
+        ctx.lineTo(beforeCorner[0], beforeCorner[1]);
 
         // Draw the actual corner with a quadratic curve
         ctx.quadraticCurveTo(p1[0], p1[1], afterCorner[0], afterCorner[1]);
@@ -2205,7 +2903,10 @@ function drawUnionWithContext(ctx, unionResult, strokeOnly = false) {
     // Handle different drawing modes
     if (strokeOnly) {
       ctx.stroke();
-    } else if (!params.showPathShapeStroke || params.strokeBlur > 0) {
+    } else if (
+      !ParamsManager.params.showPathShapeStroke ||
+      ParamsManager.params.strokeBlur > 0
+    ) {
       // Fill only (if stroke is off or stroke has blur applied separately)
       ctx.fill();
     } else {
@@ -2303,7 +3004,7 @@ function drawShapeAtPosition(
   segmentIndex = 0,
   stepIndex = 0
 ) {
-  let scale = params.shapeSize;
+  let scale = ParamsManager.params.shapeSize;
 
   // Apply size noise
   let sizeNoiseFactor = getSizeNoise(segmentIndex, stepIndex);
@@ -2313,60 +3014,37 @@ function drawShapeAtPosition(
   let scaledHeight = height * scale;
 
   // Apply shape blur if needed
-  if (params.shapeBlur > 0) {
+  if (ParamsManager.params.shapeBlur > 0) {
     // Inside-only blur with mask
-    if (params.insideBlur) {
+    if (ParamsManager.params.insideBlur) {
       // Create graphics buffer for blurred shape
       let shapeBuffer = createGraphics(scaledWidth * 1.5, scaledHeight * 1.5);
       shapeBuffer.translate(scaledWidth * 0.25, scaledHeight * 0.25);
 
       // Draw the blurred shape on the buffer
-      shapeBuffer.drawingContext.filter = `blur(${params.shapeBlur}px)`;
-      if (params.showPathShapeStroke) {
-        shapeBuffer.stroke(params.shapeStrokeColor);
-        shapeBuffer.strokeWeight(params.pathShapeStrokeWeight);
+      shapeBuffer.drawingContext.filter = `blur(${ParamsManager.params.shapeBlur}px)`;
+      if (ParamsManager.params.showPathShapeStroke) {
+        shapeBuffer.stroke(ParamsManager.params.shapeStrokeColor);
+        shapeBuffer.strokeWeight(ParamsManager.params.pathShapeStrokeWeight);
       } else {
         shapeBuffer.noStroke();
       }
 
-      // Set fill based on showFill parameter
-      if (params.showFill) {
-        // Apply gradient or solid color
-        if (params.gradientType === "none") {
-          let fillColor = color(params.shapeFillColor);
-          fillColor.setAlpha(params.shapeAlpha * 255);
-          shapeBuffer.fill(fillColor);
-        } else if (params.gradientType === "length" && progress !== null) {
-          let fillColor;
-          if (params.gradientColors === "2") {
-            fillColor = lerpColor(
-              color(params.shapeFillColor),
-              color(params.shapeFillColor2),
-              progress
-            );
-          } else {
-            fillColor =
-              progress < 0.5
-                ? lerpColor(colors[0], colors[1], progress * 2)
-                : lerpColor(colors[1], colors[2], (progress - 0.5) * 2);
-          }
-          fillColor.setAlpha(params.shapeAlpha * 255);
-          shapeBuffer.fill(fillColor);
-        } else {
-          // For complex gradients, use a solid color here and apply gradient later
-          let fillColor = color(params.shapeFillColor);
-          fillColor.setAlpha(params.shapeAlpha * 255);
-          shapeBuffer.fill(fillColor);
-        }
-      } else {
+      // Handle fill
+      if (!ParamsManager.params.showFill) {
         shapeBuffer.noFill();
+      } else {
+        // Apply solid fill (will handle gradient later)
+        let fillColor = color(ParamsManager.params.shapeFillColor);
+        fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
+        shapeBuffer.fill(fillColor);
       }
 
       // Draw the shape
-      if (params.shapeType === "rectangle") {
-        if (params.shapeCornerRadius > 0) {
+      if (ParamsManager.params.shapeType === "rectangle") {
+        if (ParamsManager.params.shapeCornerRadius > 0) {
           let radius = min(
-            params.shapeCornerRadius,
+            ParamsManager.params.shapeCornerRadius,
             scaledWidth / 2,
             scaledHeight / 2
           );
@@ -2374,7 +3052,7 @@ function drawShapeAtPosition(
         } else {
           shapeBuffer.rect(0, 0, scaledWidth, scaledHeight);
         }
-      } else if (params.shapeType === "ellipse") {
+      } else if (ParamsManager.params.shapeType === "ellipse") {
         shapeBuffer.ellipse(
           scaledWidth / 2,
           scaledHeight / 2,
@@ -2390,10 +3068,10 @@ function drawShapeAtPosition(
       maskBuffer.fill(255); // White for mask
 
       // Draw the shape mask
-      if (params.shapeType === "rectangle") {
-        if (params.shapeCornerRadius > 0) {
+      if (ParamsManager.params.shapeType === "rectangle") {
+        if (ParamsManager.params.shapeCornerRadius > 0) {
           let radius = min(
-            params.shapeCornerRadius,
+            ParamsManager.params.shapeCornerRadius,
             scaledWidth / 2,
             scaledHeight / 2
           );
@@ -2401,7 +3079,7 @@ function drawShapeAtPosition(
         } else {
           maskBuffer.rect(0, 0, scaledWidth, scaledHeight);
         }
-      } else if (params.shapeType === "ellipse") {
+      } else if (ParamsManager.params.shapeType === "ellipse") {
         maskBuffer.ellipse(
           scaledWidth / 2,
           scaledHeight / 2,
@@ -2445,9 +3123,9 @@ function drawShapeAtPosition(
 
       // Apply gradient if needed
       if (
-        params.showFill &&
-        params.gradientType !== "none" &&
-        params.gradientType !== "length"
+        ParamsManager.params.showFill &&
+        ParamsManager.params.gradientType !== "none" &&
+        ParamsManager.params.gradientType !== "length"
       ) {
         // Apply gradient using source-atop to only show within the shape
         let ctx = drawingContext;
@@ -2458,10 +3136,10 @@ function drawShapeAtPosition(
         let gradient = createGradient(ctx, scaledWidth, scaledHeight);
         ctx.fillStyle = gradient;
 
-        if (params.shapeType === "rectangle") {
-          if (params.shapeCornerRadius > 0) {
+        if (ParamsManager.params.shapeType === "rectangle") {
+          if (ParamsManager.params.shapeCornerRadius > 0) {
             let radius = min(
-              params.shapeCornerRadius,
+              ParamsManager.params.shapeCornerRadius,
               scaledWidth / 2,
               scaledHeight / 2
             );
@@ -2470,7 +3148,7 @@ function drawShapeAtPosition(
           } else {
             ctx.fillRect(0, 0, scaledWidth, scaledHeight);
           }
-        } else if (params.shapeType === "ellipse") {
+        } else if (ParamsManager.params.shapeType === "ellipse") {
           ctx.beginPath();
           ctx.ellipse(
             scaledWidth / 2,
@@ -2493,7 +3171,7 @@ function drawShapeAtPosition(
     } else {
       // Standard blur (both inside and outside)
       push();
-      drawingContext.filter = `blur(${params.shapeBlur}px)`;
+      drawingContext.filter = `blur(${ParamsManager.params.shapeBlur}px)`;
       translate(x - scaledWidth / 2, y - scaledHeight / 2);
       drawShapeWithGradient(0, 0, scaledWidth, scaledHeight, progress);
       drawingContext.filter = "none";
@@ -2511,31 +3189,31 @@ function drawShapeAtPosition(
 function drawShapeWithGradient(x, y, width, height, progress = null) {
   // Set up colors
   let colors = [];
-  colors.push(color(params.shapeFillColor));
-  colors[0].setAlpha(params.shapeAlpha * 255);
+  colors.push(color(ParamsManager.params.shapeFillColor));
+  colors[0].setAlpha(ParamsManager.params.shapeAlpha * 255);
 
-  if (params.gradientType !== "none") {
-    colors.push(color(params.shapeFillColor2));
-    colors[1].setAlpha(params.shapeAlpha * 255);
+  if (ParamsManager.params.gradientType !== "none") {
+    colors.push(color(ParamsManager.params.shapeFillColor2));
+    colors[1].setAlpha(ParamsManager.params.shapeAlpha * 255);
 
-    if (params.gradientColors === "3") {
-      colors.push(color(params.shapeFillColor3));
-      colors[2].setAlpha(params.shapeAlpha * 255);
+    if (ParamsManager.params.gradientColors === "3") {
+      colors.push(color(ParamsManager.params.shapeFillColor3));
+      colors[2].setAlpha(ParamsManager.params.shapeAlpha * 255);
     }
   }
 
   // Handle stroke settings normally (removed stroke blur code)
-  if (params.showPathShapeStroke) {
-    stroke(params.shapeStrokeColor);
-    strokeWeight(params.pathShapeStrokeWeight);
+  if (ParamsManager.params.showPathShapeStroke) {
+    stroke(ParamsManager.params.shapeStrokeColor);
+    strokeWeight(ParamsManager.params.pathShapeStrokeWeight);
   } else {
     noStroke();
   }
 
   // Skip fill drawing if showFill is false
-  if (!params.showFill) {
+  if (!ParamsManager.params.showFill) {
     // If showPathShapeStroke is also false, we need to draw something
-    if (!params.showPathShapeStroke) {
+    if (!ParamsManager.params.showPathShapeStroke) {
       return;
     }
 
@@ -2552,12 +3230,15 @@ function drawShapeWithGradient(x, y, width, height, progress = null) {
   translate(x, y);
 
   // Handle different gradient types
-  if (params.gradientType === "none") {
+  if (ParamsManager.params.gradientType === "none") {
     fill(colors[0]);
     drawShape(0, 0, width, height);
-  } else if (params.gradientType === "length" && progress !== null) {
+  } else if (
+    ParamsManager.params.gradientType === "length" &&
+    progress !== null
+  ) {
     let fillColor;
-    if (params.gradientColors === "2") {
+    if (ParamsManager.params.gradientColors === "2") {
       fillColor = lerpColor(colors[0], colors[1], progress);
     } else {
       fillColor =
@@ -2582,34 +3263,42 @@ function drawShapeWithGradient(x, y, width, height, progress = null) {
 }
 
 function drawShape(x, y, width, height) {
-  if (params.shapeType === "rectangle") {
-    if (params.shapeCornerRadius > 0) {
-      let radius = min(params.shapeCornerRadius, width / 2, height / 2);
+  if (ParamsManager.params.shapeType === "rectangle") {
+    if (ParamsManager.params.shapeCornerRadius > 0) {
+      let radius = min(
+        ParamsManager.params.shapeCornerRadius,
+        width / 2,
+        height / 2
+      );
       rect(x, y, width, height, radius);
     } else {
       rect(x, y, width, height);
     }
-  } else if (params.shapeType === "ellipse") {
+  } else if (ParamsManager.params.shapeType === "ellipse") {
     ellipse(x + width / 2, y + height / 2, width, height);
   }
 }
 
 function drawShapeWithContext(ctx, width, height) {
-  if (params.shapeType === "rectangle") {
-    if (params.shapeCornerRadius > 0) {
-      let radius = min(params.shapeCornerRadius, width / 2, height / 2);
+  if (ParamsManager.params.shapeType === "rectangle") {
+    if (ParamsManager.params.shapeCornerRadius > 0) {
+      let radius = min(
+        ParamsManager.params.shapeCornerRadius,
+        width / 2,
+        height / 2
+      );
       roundedRect(ctx, 0, 0, width, height, radius);
     } else {
       ctx.fillRect(0, 0, width, height);
-      if (params.showPathShapeStroke) {
+      if (ParamsManager.params.showPathShapeStroke) {
         ctx.strokeRect(0, 0, width, height);
       }
     }
-  } else if (params.shapeType === "ellipse") {
+  } else if (ParamsManager.params.shapeType === "ellipse") {
     ctx.beginPath();
     ctx.ellipse(width / 2, height / 2, width / 2, height / 2, 0, 0, TWO_PI);
     ctx.fill();
-    if (params.showPathShapeStroke) {
+    if (ParamsManager.params.showPathShapeStroke) {
       ctx.stroke();
     }
   }
@@ -2628,14 +3317,14 @@ function roundedRect(ctx, x, y, width, height, radius) {
   ctx.quadraticCurveTo(x, y, x + radius, y);
   ctx.closePath();
   ctx.fill();
-  if (params.showPathShapeStroke) {
+  if (ParamsManager.params.showPathShapeStroke) {
     ctx.stroke();
   }
 }
 
 function createGradient(ctx, width, height) {
   let gradient;
-  switch (params.gradientType) {
+  switch (ParamsManager.params.gradientType) {
     case "horizontal":
       gradient = ctx.createLinearGradient(0, 0, width, 0);
       break;
@@ -2663,37 +3352,47 @@ function createGradient(ctx, width, height) {
   }
 
   // Create colors with proper alpha value
-  let c1 = color(params.shapeFillColor);
-  let c2 = color(params.shapeFillColor2);
-  let c3 = color(params.shapeFillColor3);
+  let c1 = color(ParamsManager.params.shapeFillColor);
+  let c2 = color(ParamsManager.params.shapeFillColor2);
+  let c3 = color(ParamsManager.params.shapeFillColor3);
 
   // Apply alpha to all colors
-  c1.setAlpha(params.shapeAlpha * 255);
-  c2.setAlpha(params.shapeAlpha * 255);
-  c3.setAlpha(params.shapeAlpha * 255);
+  c1.setAlpha(ParamsManager.params.shapeAlpha * 255);
+  c2.setAlpha(ParamsManager.params.shapeAlpha * 255);
+  c3.setAlpha(ParamsManager.params.shapeAlpha * 255);
 
   // Add color stops with rgba format to preserve transparency
-  if (params.gradientColors === "2") {
+  if (ParamsManager.params.gradientColors === "2") {
     gradient.addColorStop(
       0,
-      `rgba(${red(c1)}, ${green(c1)}, ${blue(c1)}, ${params.shapeAlpha})`
+      `rgba(${red(c1)}, ${green(c1)}, ${blue(c1)}, ${
+        ParamsManager.params.shapeAlpha
+      })`
     );
     gradient.addColorStop(
       1,
-      `rgba(${red(c2)}, ${green(c2)}, ${blue(c2)}, ${params.shapeAlpha})`
+      `rgba(${red(c2)}, ${green(c2)}, ${blue(c2)}, ${
+        ParamsManager.params.shapeAlpha
+      })`
     );
   } else {
     gradient.addColorStop(
       0,
-      `rgba(${red(c1)}, ${green(c1)}, ${blue(c1)}, ${params.shapeAlpha})`
+      `rgba(${red(c1)}, ${green(c1)}, ${blue(c1)}, ${
+        ParamsManager.params.shapeAlpha
+      })`
     );
     gradient.addColorStop(
       0.5,
-      `rgba(${red(c2)}, ${green(c2)}, ${blue(c2)}, ${params.shapeAlpha})`
+      `rgba(${red(c2)}, ${green(c2)}, ${blue(c2)}, ${
+        ParamsManager.params.shapeAlpha
+      })`
     );
     gradient.addColorStop(
       1,
-      `rgba(${red(c3)}, ${green(c3)}, ${blue(c3)}, ${params.shapeAlpha})`
+      `rgba(${red(c3)}, ${green(c3)}, ${blue(c3)}, ${
+        ParamsManager.params.shapeAlpha
+      })`
     );
   }
 
@@ -2701,7 +3400,7 @@ function createGradient(ctx, width, height) {
 }
 
 function getPositionNoise(x, y, segmentIndex, stepIndex) {
-  if (params.positionNoise === 0) {
+  if (ParamsManager.params.positionNoise === 0) {
     return { x: 0, y: 0 };
   }
 
@@ -2714,7 +3413,7 @@ function getPositionNoise(x, y, segmentIndex, stepIndex) {
 
   // Create random angle and distance
   let angle = randomX * TWO_PI;
-  let distance = abs(randomY) * params.positionNoise;
+  let distance = abs(randomY) * ParamsManager.params.positionNoise;
 
   return {
     x: cos(angle) * distance,
@@ -2723,7 +3422,7 @@ function getPositionNoise(x, y, segmentIndex, stepIndex) {
 }
 
 function getSizeNoise(segmentIndex, stepIndex) {
-  if (params.sizeNoise === 0) {
+  if (ParamsManager.params.sizeNoise === 0) {
     return 1.0; // No change in size
   }
 
@@ -2743,382 +3442,9 @@ function getSizeNoise(segmentIndex, stepIndex) {
   // Map the random factor to a size multiplier between 1-sizeNoise and 1+sizeNoise
   // Constrain to ensure we don't get extreme values
   let sizeMultiplier =
-    1.0 + constrain(randomFactor, -0.95, 0.95) * params.sizeNoise;
+    1.0 + constrain(randomFactor, -0.95, 0.95) * ParamsManager.params.sizeNoise;
 
   return sizeMultiplier;
-}
-
-// Add this function to your sketch.js file
-function updatePathCells() {
-  pathCells = [];
-  cellSizes = {};
-
-  // Initialize newPathCells to prevent reference errors
-  let newPathCells = [];
-
-  // First handle the initial cell selection based on the includeSides parameter
-  let positions = [];
-  let usedRows = new Set();
-  let usedCols = new Set();
-  let startPoint = null;
-  let endPoint = null;
-
-  // If using side connections, select edge points
-  if (params.includeSides && !params.closedLoop) {
-    // Generate specific middle points on each edge
-    let edgePoints = [];
-
-    // Middle point of top edge
-    edgePoints.push({
-      i: 0,
-      j: Math.floor(params.gridWidth / 2),
-      edge: "top",
-    });
-
-    // Middle point of right edge
-    edgePoints.push({
-      i: Math.floor(params.gridHeight / 2),
-      j: params.gridWidth - 1,
-      edge: "right",
-    });
-
-    // Middle point of bottom edge
-    edgePoints.push({
-      i: params.gridHeight - 1,
-      j: Math.floor(params.gridWidth / 2),
-      edge: "bottom",
-    });
-
-    // Middle point of left edge
-    edgePoints.push({
-      i: Math.floor(params.gridHeight / 2),
-      j: 0,
-      edge: "left",
-    });
-
-    // Choose two random distinct edge points
-    if (edgePoints.length >= 2) {
-      let idx1 = Math.floor(random(edgePoints.length));
-      startPoint = edgePoints[idx1];
-
-      // Remove the first point from options
-      edgePoints.splice(idx1, 1);
-
-      let idx2 = Math.floor(random(edgePoints.length));
-      endPoint = edgePoints[idx2];
-    }
-
-    if (startPoint) {
-      pathCells.push(startPoint);
-      usedRows.add(startPoint.i);
-      usedCols.add(startPoint.j);
-    }
-
-    if (endPoint) {
-      // Only add end point to usedRows/usedCols if not closed loop
-      if (!params.closedLoop) {
-        usedRows.add(endPoint.i);
-        usedCols.add(endPoint.j);
-      }
-    }
-  }
-
-  // Calculate how many cells we need to add
-  // (selected count minus edge points already added)
-  let cellsNeeded = params.selectedCells - pathCells.length;
-  if (params.includeSides && !params.closedLoop && endPoint) {
-    cellsNeeded -= 1; // Reserve space for end point
-  }
-
-  // Create a list of all valid cells
-  for (let i = 0; i < params.gridHeight; i++) {
-    for (let j = 0; j < params.gridWidth; j++) {
-      if (params.uniqueRowsCols && (usedRows.has(i) || usedCols.has(j))) {
-        continue;
-      }
-
-      // Skip cells already in pathCells
-      let alreadyUsed = false;
-      for (let cell of pathCells) {
-        if (cell.i === i && cell.j === j) {
-          alreadyUsed = true;
-          break;
-        }
-      }
-
-      if (!alreadyUsed) {
-        positions.push({ i, j });
-      }
-    }
-  }
-
-  // Randomly select cells
-  while (pathCells.length < cellsNeeded && positions.length > 0) {
-    let index = Math.floor(random(positions.length));
-    let cell = positions[index];
-
-    pathCells.push(cell);
-    positions.splice(index, 1);
-
-    if (params.uniqueRowsCols) {
-      // Remove cells in the same row/column
-      positions = positions.filter(
-        (pos) => pos.i !== cell.i && pos.j !== cell.j
-      );
-
-      // Add to used rows/columns
-      usedRows.add(cell.i);
-      usedCols.add(cell.j);
-    }
-  }
-
-  // Add the end point if using side connections
-  if (params.includeSides && !params.closedLoop && endPoint) {
-    pathCells.push(endPoint);
-  }
-
-  // Apply path direction constraints if enabled
-  if (params.pathDirection !== "any" && pathCells.length > 0) {
-    // Save edge points if includeSides is true
-    let edgePoints = [];
-    if (params.includeSides && !params.closedLoop) {
-      // First and last points should be preserved as edge points
-      edgePoints = [pathCells[0], pathCells[pathCells.length - 1]];
-      // Remove edge points from path for now
-      pathCells = pathCells.slice(1, -1);
-    }
-
-    // Start with first cell in the path
-    let firstCell =
-      params.includeSides && !params.closedLoop ? edgePoints[0] : pathCells[0];
-
-    // Clear the existing path except for the first cell
-    newPathCells = [firstCell];
-    usedRows = new Set([firstCell.i]);
-    usedCols = new Set([firstCell.j]);
-
-    // Get all cells that could be part of the path
-    let remainingCells = [];
-
-    // Calculate target count based on original selected cells
-    let targetCount =
-      params.includeSides && !params.closedLoop
-        ? params.selectedCells - 1 // Leave room for the end edge point
-        : params.selectedCells;
-
-    // Collect all possible cells for path segments
-    for (let i = 0; i < params.gridHeight; i++) {
-      for (let j = 0; j < params.gridWidth; j++) {
-        // Skip the cells already in the path
-        if (i === firstCell.i && j === firstCell.j) continue;
-
-        // If using unique rows/cols, skip cells in used rows/cols
-        if (params.uniqueRowsCols && (usedRows.has(i) || usedCols.has(j)))
-          continue;
-
-        remainingCells.push({ i, j });
-      }
-    }
-
-    // Build the constrained path
-    while (newPathCells.length < targetCount - 1 && remainingCells.length > 0) {
-      let lastCell = newPathCells[newPathCells.length - 1];
-
-      // Find valid neighbors based on the selected path direction
-      let validNeighbors = remainingCells.filter((cell) => {
-        // Determine direction type based on relative positions
-        let isVerticalOrHorizontal =
-          (cell.i === lastCell.i && cell.j !== lastCell.j) || // Same row, different column
-          (cell.j === lastCell.j && cell.i !== lastCell.i); // Same column, different row
-
-        let isDiagonal =
-          Math.abs(cell.i - lastCell.i) === Math.abs(cell.j - lastCell.j) && // Equal change in row and column
-          Math.abs(cell.i - lastCell.i) > 0; // Ensure it's not the same cell
-
-        // Apply filter based on path direction setting
-        switch (params.pathDirection) {
-          case "90":
-            return isVerticalOrHorizontal;
-          case "45":
-            return isDiagonal;
-          case "90+45":
-            return isVerticalOrHorizontal || isDiagonal;
-          default:
-            return true; // "any" - allow any direction
-        }
-      });
-
-      // If we have valid neighbors, pick one randomly
-      if (validNeighbors.length > 0) {
-        let randomIndex = Math.floor(random(validNeighbors.length));
-        let nextCell = validNeighbors[randomIndex];
-
-        // Add to path
-        newPathCells.push(nextCell);
-        usedRows.add(nextCell.i);
-        usedCols.add(nextCell.j);
-
-        // Remove from remaining cells
-        let indexToRemove = remainingCells.findIndex(
-          (cell) => cell.i === nextCell.i && cell.j === nextCell.j
-        );
-        if (indexToRemove !== -1) {
-          remainingCells.splice(indexToRemove, 1);
-        }
-
-        // If uniqueRowsCols is enabled, remove cells in same row/column
-        if (params.uniqueRowsCols) {
-          remainingCells = remainingCells.filter(
-            (cell) => cell.i !== nextCell.i && cell.j !== nextCell.j
-          );
-        }
-      } else {
-        // No valid neighbors, break the loop
-        break;
-      }
-    }
-
-    // If we're using includeSides, handle connection to the end edge point
-    if (params.includeSides && !params.closedLoop && edgePoints.length > 1) {
-      let lastCell = newPathCells[newPathCells.length - 1];
-      let endPoint = edgePoints[1];
-      let canConnectDirectly = false;
-
-      // Check if we can connect directly based on path direction
-      switch (params.pathDirection) {
-        case "90":
-          canConnectDirectly =
-            endPoint.i === lastCell.i || // Same row
-            endPoint.j === lastCell.j; // Same column
-          break;
-        case "45":
-          canConnectDirectly =
-            Math.abs(endPoint.i - lastCell.i) ===
-            Math.abs(endPoint.j - lastCell.j);
-          break;
-        case "90+45":
-          canConnectDirectly =
-            endPoint.i === lastCell.i || // Same row
-            endPoint.j === lastCell.j || // Same column
-            Math.abs(endPoint.i - lastCell.i) ===
-              Math.abs(endPoint.j - lastCell.j); // Diagonal
-          break;
-        default: // "any"
-          canConnectDirectly = true;
-          break;
-      }
-
-      if (canConnectDirectly) {
-        // Direct connection is possible with current direction constraint
-        newPathCells.push(endPoint);
-      } else {
-        // Need intermediate points to maintain path direction constraints
-        let intermediatePoints = [];
-
-        if (params.pathDirection === "90" || params.pathDirection === "90+45") {
-          // Try an intermediate point with either same row or column
-          let intermediateCell = {
-            i: lastCell.i, // Same row as last cell
-            j: endPoint.j, // Same column as end point
-          };
-
-          if (
-            !params.uniqueRowsCols ||
-            (!usedRows.has(intermediateCell.i) &&
-              !usedCols.has(intermediateCell.j))
-          ) {
-            intermediatePoints.push(intermediateCell);
-          } else {
-            // Try the other orientation
-            intermediateCell = {
-              i: endPoint.i, // Same row as end point
-              j: lastCell.j, // Same column as last cell
-            };
-
-            if (
-              !params.uniqueRowsCols ||
-              (!usedRows.has(intermediateCell.i) &&
-                !usedCols.has(intermediateCell.j))
-            ) {
-              intermediatePoints.push(intermediateCell);
-            }
-          }
-        }
-
-        if (params.pathDirection === "45" || params.pathDirection === "90+45") {
-          // For 45° paths, we might need intermediate points to create a diagonal path
-          let di = endPoint.i - lastCell.i;
-          let dj = endPoint.j - lastCell.j;
-
-          // If the end point isn't reachable with a single diagonal move
-          if (Math.abs(di) !== Math.abs(dj)) {
-            // Calculate an intermediate point that allows diagonal movement
-            // by adjusting either row or column
-            let adjustRow = Math.abs(di) < Math.abs(dj);
-            let intermediate1 = {
-              i: adjustRow
-                ? lastCell.i + di
-                : lastCell.i + Math.sign(di) * Math.abs(dj),
-              j: adjustRow
-                ? lastCell.j + Math.sign(dj) * Math.abs(di)
-                : lastCell.j + dj,
-            };
-
-            // Make sure it's within grid bounds
-            if (
-              intermediate1.i >= 0 &&
-              intermediate1.i < params.gridHeight &&
-              intermediate1.j >= 0 &&
-              intermediate1.j < params.gridWidth
-            ) {
-              intermediatePoints.push(intermediate1);
-            }
-          }
-        }
-
-        // Add all valid intermediate points
-        for (let point of intermediatePoints) {
-          newPathCells.push(point);
-          usedRows.add(point.i);
-          usedCols.add(point.j);
-        }
-
-        // Finally add the end point
-        newPathCells.push(endPoint);
-      }
-    }
-
-    // Replace the original pathCells with our new constrained path
-    pathCells = newPathCells;
-  }
-
-  // Initialize random cell sizes for each cell
-  for (let cell of pathCells) {
-    let key = `${cell.i},${cell.j}`;
-    cellSizes[key] = random(0.5, 1.5);
-  }
-}
-
-// Helper function to reset all parameters to default values
-function resetToDefaults() {
-  for (const key in defaultParams) {
-    if (
-      params.hasOwnProperty(key) &&
-      typeof defaultParams[key] !== "function"
-    ) {
-      params[key] = defaultParams[key];
-    }
-  }
-
-  // Update all controllers in the GUI
-  for (let folder in gui.__folders) {
-    for (let controller of gui.__folders[folder].__controllers) {
-      controller.updateDisplay();
-    }
-  }
-
-  // Regenerate the path
-  updatePathCells();
 }
 
 // Add the keyPressed function to handle keyboard shortcuts
@@ -3126,13 +3452,13 @@ function keyPressed() {
   // Check for specific keys
   if (key === "r" || key === "R") {
     // Trigger regenerate function
-    params.regeneratePath();
+    ParamsManager.params.regeneratePath();
   } else if (key === "s" || key === "S") {
     // Trigger save image function
-    params.exportImage();
+    ParamsManager.params.exportImage();
   } else if (key === "e" || key === "E") {
     // Trigger save package versions function
-    params.exportPackageVersions();
+    ParamsManager.params.exportPackageVersions();
   }
 
   // Prevent default behavior for these keys
