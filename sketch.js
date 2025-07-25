@@ -5,6 +5,11 @@ let cellSizes = {};
 
 // Global constants for default parameters
 const DefaultParams = {
+  // Export parameters
+  exportDPI: 300,
+  exportSizeCM: 14,
+  exportSizePixels: 1654,
+
   // Grid parameters
   canvasSize: 570,
   gridSize: 500,
@@ -230,6 +235,116 @@ const ParamsManager = {
       this.params.backgroundColor = originalBgColor;
       window.useTransparentBackground = originalUseTransparent;
       redraw();
+    };
+
+    this.params.exportCustomSize = () => {
+      // Create a timestamp for the filename
+      let now = new Date();
+      let dateString =
+        now.getFullYear() +
+        String(now.getMonth() + 1).padStart(2, "0") +
+        String(now.getDate()).padStart(2, "0") +
+        "_" +
+        String(now.getHours()).padStart(2, "0") +
+        String(now.getMinutes()).padStart(2, "0") +
+        String(now.getSeconds()).padStart(2, "0");
+
+      // Store original parameters
+      const originalGridSize = this.params.gridSize;
+      const originalMargin = this.params.gridMargin;
+      const originalCanvasSize = this.params.canvasSize;
+      const originalScaleFactor = window.currentScaleFactor;
+
+      try {
+        // Create a new off-screen canvas at the desired export size
+        const exportCanvas = createGraphics(
+          this.params.exportSizePixels,
+          this.params.exportSizePixels
+        );
+
+        // Calculate exact export scale factor
+        const exportScale = this.params.exportSizePixels / originalCanvasSize;
+
+        // Apply background
+        if (window.useTransparentBackground) {
+          exportCanvas.clear();
+        } else {
+          exportCanvas.background(this.params.backgroundColor);
+        }
+
+        // Temporarily modify parameters for export
+        this.params.canvasSize = this.params.exportSizePixels;
+
+        // Scale grid size and margin by the export scale factor
+        this.params.gridSize = Math.round(originalGridSize * exportScale);
+        this.params.gridMargin = Math.round(originalMargin * exportScale);
+
+        // Calculate grid position for export
+        const gridPosition = {
+          x: this.params.gridMargin,
+          y: this.params.gridMargin,
+        };
+
+        // Set the correct scale factor for export
+        window.currentScaleFactor = this.params.gridSize / 500;
+
+        console.log(
+          `Export: scale=${exportScale}, scaleFactor=${window.currentScaleFactor}, gridSize=${this.params.gridSize}`
+        );
+
+        // Draw to the export canvas with correct positioning
+        exportCanvas.push();
+        exportCanvas.translate(gridPosition.x, gridPosition.y);
+
+        // Draw grid if enabled (behind content)
+        if (this.params.showGrid && !this.params.gridOnTop) {
+          // Use the drawToCanvas method which properly handles the exportCanvas context
+          GridSystem.drawToCanvas(exportCanvas);
+        }
+
+        // Draw path content
+        if (
+          this.params.showShape ||
+          this.params.showPath ||
+          this.params.fillPath
+        ) {
+          // We need a complete implementation of drawPathToCanvas to ensure all features work
+          PathRenderer.drawPathToCanvas(exportCanvas);
+        }
+
+        // Draw grid on top if needed
+        if (this.params.showGrid && this.params.gridOnTop) {
+          GridSystem.drawToCanvas(exportCanvas);
+        }
+
+        exportCanvas.pop();
+
+        // Save the export canvas
+        saveCanvas(
+          exportCanvas,
+          dateString +
+            `_Atico_Stray_${this.params.exportSizePixels}px_${this.params.exportDPI}dpi`,
+          "png"
+        );
+
+        // Clean up
+        exportCanvas.remove();
+
+        // Log export info
+        console.log(
+          `Exported at ${this.params.exportDPI} DPI, ` +
+            `${this.params.exportSizeCM}cm (${this.params.exportSizePixels}px)`
+        );
+      } finally {
+        // Always restore original parameters, even if export fails
+        this.params.gridSize = originalGridSize;
+        this.params.gridMargin = originalMargin;
+        this.params.canvasSize = originalCanvasSize;
+        window.currentScaleFactor = originalScaleFactor;
+
+        // Force redraw to restore the view
+        redraw();
+      }
     };
   },
 
@@ -882,6 +997,74 @@ const GridSystem = {
       pop();
     }
   },
+
+  // Draw to a specific canvas (for export)
+  drawToCanvas(targetCanvas) {
+    const scaleFactor = window.currentScaleFactor;
+
+    // Calculate scaled padding consistently
+    const scaledGridPadding = ParamsManager.params.gridPadding * scaleFactor;
+
+    if (ParamsManager.params.gridBlur * scaleFactor > 0) {
+      targetCanvas.push();
+      targetCanvas.drawingContext.filter = `blur(${
+        ParamsManager.params.gridBlur * scaleFactor
+      }px)`;
+    }
+
+    targetCanvas.stroke(ParamsManager.params.gridColor);
+    targetCanvas.strokeWeight(
+      ParamsManager.params.gridStrokeWeight * scaleFactor
+    );
+    targetCanvas.noFill();
+
+    const { cellWidth, cellHeight } = Utils.getCellDimensions();
+
+    // Draw the grid lines
+    for (let i = 0; i <= ParamsManager.params.gridHeight; i++) {
+      targetCanvas.line(
+        0,
+        i * cellHeight,
+        ParamsManager.params.gridSize,
+        i * cellHeight
+      );
+    }
+
+    for (let j = 0; j <= ParamsManager.params.gridWidth; j++) {
+      targetCanvas.line(
+        j * cellWidth,
+        0,
+        j * cellWidth,
+        ParamsManager.params.gridSize
+      );
+    }
+
+    // Draw padding boundary if visible
+    if (
+      ParamsManager.params.gridPadding > 0 &&
+      ParamsManager.params.showPadding
+    ) {
+      let paddingColor = targetCanvas.color(ParamsManager.params.gridColor);
+      paddingColor.setAlpha(100); // Semi-transparent
+      targetCanvas.stroke(paddingColor);
+      targetCanvas.strokeWeight(
+        ParamsManager.params.gridStrokeWeight * scaleFactor * 0.5
+      );
+
+      // Draw outer padding boundary using scaled padding
+      targetCanvas.rect(
+        -scaledGridPadding,
+        -scaledGridPadding,
+        ParamsManager.params.gridSize + scaledGridPadding * 2,
+        ParamsManager.params.gridSize + scaledGridPadding * 2
+      );
+    }
+
+    if (ParamsManager.params.gridBlur * scaleFactor > 0) {
+      targetCanvas.drawingContext.filter = "none";
+      targetCanvas.pop();
+    }
+  },
 };
 
 // UI Manager module
@@ -889,6 +1072,7 @@ const UIManager = {
   gui: null,
   folders: {
     general: null,
+    export: null,
     grid: null,
     shape: null,
     path: null,
@@ -900,6 +1084,7 @@ const UIManager = {
     this.gui.width = 400;
 
     this.setupGeneralFolder();
+    this.setupExportFolder();
     this.setupGridFolder();
     this.setupShapeFolder();
     this.setupPathFolder();
@@ -931,6 +1116,43 @@ const UIManager = {
       .add(ParamsManager.params, "shapeStyle", Object.keys(ShapeStylePresets))
       .name("Shape Style")
       .onChange((value) => ParamsManager.applyStyle(value));
+  },
+
+  setupExportFolder() {
+    this.folders.export = this.gui.addFolder("Export Settings");
+
+    // DPI selector
+    this.folders.export
+      .add(ParamsManager.params, "exportDPI", [72, 150, 300, 600])
+      .name("Export DPI")
+      .onChange(() => {
+        // Update pixel size when DPI changes
+        this.updateExportSizePixels();
+      });
+
+    // Size in centimeters
+    this.folders.export
+      .add(ParamsManager.params, "exportSizeCM", 1, 100)
+      .name("Size (cm)")
+      .onChange(() => {
+        // Update pixel size when cm size changes
+        this.updateExportSizePixels();
+      });
+
+    // Size in pixels
+    this.folders.export
+      .add(ParamsManager.params, "exportSizePixels", 100, 10000)
+      .step(1)
+      .name("Size (px)")
+      .onChange(() => {
+        // Update cm size when pixel size changes
+        this.updateExportSizeCM();
+      });
+
+    // Export button
+    this.folders.export
+      .add(ParamsManager.params, "exportCustomSize")
+      .name("Export Custom Size");
   },
 
   setupGridFolder() {
@@ -1350,6 +1572,45 @@ const UIManager = {
     for (let folder in this.gui.__folders) {
       for (let controller of this.gui.__folders[folder].__controllers) {
         controller.updateDisplay();
+      }
+    }
+  },
+
+  // Helper method to update pixel size based on cm and DPI
+  updateExportSizePixels() {
+    // Calculate pixels from cm: cm * DPI / 2.54 (cm per inch)
+    const newSizePixels = Math.round(
+      (ParamsManager.params.exportSizeCM * ParamsManager.params.exportDPI) /
+        2.54
+    );
+
+    // Update the parameter
+    ParamsManager.params.exportSizePixels = newSizePixels;
+
+    // Update the controller display
+    for (let controller of this.folders.export.__controllers) {
+      if (controller.property === "exportSizePixels") {
+        controller.updateDisplay();
+        break;
+      }
+    }
+  },
+
+  // Helper method to update cm size based on pixels and DPI
+  updateExportSizeCM() {
+    // Calculate cm from pixels: pixels * 2.54 / DPI
+    const newSizeCM =
+      (ParamsManager.params.exportSizePixels * 2.54) /
+      ParamsManager.params.exportDPI;
+
+    // Update the parameter (round to 2 decimal places)
+    ParamsManager.params.exportSizeCM = Math.round(newSizeCM * 100) / 100;
+
+    // Update the controller display
+    for (let controller of this.folders.export.__controllers) {
+      if (controller.property === "exportSizeCM") {
+        controller.updateDisplay();
+        break;
       }
     }
   },
@@ -2497,6 +2758,1338 @@ const PathRenderer = {
           cell.i * ParamsManager.params.gridWidth + cell.j // Use cell index as step index
         );
       }
+    }
+  },
+
+  // Draw to a specific canvas (for export)
+  drawPathToCanvas(targetCanvas) {
+    // Draw the path line if either stroke or fill is enabled
+    if (ParamsManager.params.showPath || ParamsManager.params.fillPath) {
+      this.drawPathLineToCanvas(targetCanvas);
+    }
+
+    // Draw the shapes if enabled
+    if (ParamsManager.params.showShape) {
+      if (ParamsManager.params.booleanUnion && polybool) {
+        this.drawBooleanUnionPathToCanvas(targetCanvas);
+      } else {
+        this.drawRegularPathToCanvas(targetCanvas);
+      }
+    }
+  },
+
+  drawPathLineToCanvas(targetCanvas) {
+    const numSegments = ParamsManager.params.closedLoop
+      ? pathCells.length
+      : pathCells.length - 1;
+    const { cellWidth, cellHeight } = Utils.getCellDimensions();
+
+    // Skip drawing if both stroke and fill are disabled
+    if (!ParamsManager.params.showPath && !ParamsManager.params.fillPath) {
+      return;
+    }
+
+    // Apply blur if needed
+    if (ParamsManager.getScaledParam("pathBlur") > 0) {
+      targetCanvas.push();
+      targetCanvas.drawingContext.filter = `blur(${ParamsManager.getScaledParam(
+        "pathBlur"
+      )}px)`;
+    }
+
+    // Set stroke properties
+    if (ParamsManager.params.showPath) {
+      targetCanvas.stroke(ParamsManager.params.pathStrokeColor);
+      targetCanvas.strokeWeight(
+        ParamsManager.getScaledParam("pathStrokeWeight")
+      );
+
+      // Set stroke cap and join
+      switch (ParamsManager.params.pathStrokeCap) {
+        case "round":
+          targetCanvas.strokeCap(ROUND);
+          break;
+        case "project":
+          targetCanvas.strokeCap(PROJECT);
+          break;
+        case "square":
+        default:
+          targetCanvas.strokeCap(SQUARE);
+          break;
+      }
+
+      switch (ParamsManager.params.pathStrokeJoin) {
+        case "round":
+          targetCanvas.strokeJoin(ROUND);
+          break;
+        case "bevel":
+          targetCanvas.strokeJoin(BEVEL);
+          break;
+        case "miter":
+        default:
+          targetCanvas.strokeJoin(MITER);
+          break;
+      }
+    } else {
+      targetCanvas.noStroke();
+    }
+
+    // Set fill
+    if (ParamsManager.params.fillPath) {
+      targetCanvas.fill(ParamsManager.params.pathFillColor);
+    } else {
+      targetCanvas.noFill();
+    }
+
+    // Draw path based on type
+    if (
+      ParamsManager.getScaledParam("pathCornerRadius") > 0 &&
+      ParamsManager.params.pathType !== "curved"
+    ) {
+      this.drawPathWithRoundedCornersToCanvas(
+        targetCanvas,
+        cellWidth,
+        cellHeight
+      );
+    } else if (ParamsManager.params.pathType === "curved") {
+      this.drawCurvedPathToCanvas(targetCanvas, cellWidth, cellHeight);
+    } else {
+      // Standard straight path
+      targetCanvas.beginShape();
+      for (let i = 0; i < pathCells.length; i++) {
+        let currentCell = pathCells[i];
+        let x = currentCell.j * cellWidth + cellWidth / 2;
+        let y = currentCell.i * cellHeight + cellHeight / 2;
+        targetCanvas.vertex(x, y);
+      }
+      targetCanvas.endShape(ParamsManager.params.closedLoop ? CLOSE : OPEN);
+    }
+
+    // Reset blur filter if applied
+    if (ParamsManager.getScaledParam("pathBlur") > 0) {
+      targetCanvas.drawingContext.filter = "none";
+      targetCanvas.pop();
+    }
+  },
+
+  drawCurvedPathToCanvas(targetCanvas, cellWidth, cellHeight) {
+    targetCanvas.beginShape();
+
+    for (let i = 0; i < pathCells.length; i++) {
+      let currentCell = pathCells[i];
+      let x = currentCell.j * cellWidth + cellWidth / 2;
+      let y = currentCell.i * cellHeight + cellHeight / 2;
+
+      // For the first point, just move to it
+      if (i === 0) {
+        targetCanvas.vertex(x, y);
+        continue;
+      }
+
+      let prevCell = pathCells[i - 1];
+      let prevX = prevCell.j * cellWidth + cellWidth / 2;
+      let prevY = prevCell.i * cellHeight + cellHeight / 2;
+
+      // Calculate control points for curves
+      let midX = (prevX + x) / 2;
+      let midY = (prevY + y) / 2;
+      let perpX = -(y - prevY) * ParamsManager.params.curveAmount;
+      let perpY = (x - prevX) * ParamsManager.params.curveAmount;
+
+      if (ParamsManager.params.constrainToGrid) {
+        // Apply constraints to keep curve within grid
+        let safeControlPoint = this.findSafeControlPoint(
+          prevX,
+          prevY,
+          x,
+          y,
+          midX,
+          midY,
+          perpX,
+          perpY,
+          cellWidth,
+          cellHeight
+        );
+
+        perpX = safeControlPoint.perpX;
+        perpY = safeControlPoint.perpY;
+      }
+
+      // Draw bezier curve segment
+      targetCanvas.bezierVertex(
+        midX + perpX,
+        midY + perpY,
+        midX + perpX,
+        midY + perpY,
+        x,
+        y
+      );
+    }
+
+    // Close the loop if needed
+    if (ParamsManager.params.closedLoop) {
+      let firstCell = pathCells[0];
+      let lastCell = pathCells[pathCells.length - 1];
+      let firstX = firstCell.j * cellWidth + cellWidth / 2;
+      let firstY = firstCell.i * cellHeight + cellHeight / 2;
+      let lastX = lastCell.j * cellWidth + cellWidth / 2;
+      let lastY = lastCell.i * cellHeight + cellHeight / 2;
+
+      let midX = (lastX + firstX) / 2;
+      let midY = (lastY + firstY) / 2;
+      let perpX = -(firstY - lastY) * ParamsManager.params.curveAmount;
+      let perpY = (firstX - lastX) * ParamsManager.params.curveAmount;
+
+      if (ParamsManager.params.constrainToGrid) {
+        // Apply constraints to closing segment
+        let safeControlPoint = this.findSafeControlPoint(
+          lastX,
+          lastY,
+          firstX,
+          firstY,
+          midX,
+          midY,
+          perpX,
+          perpY,
+          cellWidth,
+          cellHeight
+        );
+
+        perpX = safeControlPoint.perpX;
+        perpY = safeControlPoint.perpY;
+      }
+
+      targetCanvas.bezierVertex(
+        midX + perpX,
+        midY + perpY,
+        midX + perpX,
+        midY + perpY,
+        firstX,
+        firstY
+      );
+    }
+
+    targetCanvas.endShape(ParamsManager.params.closedLoop ? CLOSE : OPEN);
+  },
+
+  drawPathWithRoundedCornersToCanvas(targetCanvas, cellWidth, cellHeight) {
+    if (pathCells.length < 2) return;
+
+    // Calculate path points
+    let points = pathCells.map((cell) => {
+      return {
+        x: cell.j * cellWidth + cellWidth / 2,
+        y: cell.i * cellHeight + cellHeight / 2,
+      };
+    });
+
+    // For closed loop, add first point again at the end
+    if (ParamsManager.params.closedLoop) {
+      points.push({
+        x: points[0].x,
+        y: points[0].y,
+      });
+    }
+
+    targetCanvas.beginShape();
+
+    // Start at the first point
+    targetCanvas.vertex(points[0].x, points[0].y);
+
+    // For each middle point, create rounded corners
+    for (let i = 1; i < points.length - 1; i++) {
+      let p1 = points[i - 1]; // Previous point
+      let p2 = points[i]; // Current point
+      let p3 = points[i + 1]; // Next point
+
+      // Calculate vectors
+      let v1 = { x: p2.x - p1.x, y: p2.y - p1.y }; // Vector from previous to current
+      let v2 = { x: p3.x - p2.x, y: p3.y - p2.y }; // Vector from current to next
+
+      // Normalize vectors
+      let len1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y);
+      let len2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y);
+
+      if (len1 === 0 || len2 === 0) {
+        // Skip degenerate segments
+        targetCanvas.vertex(p2.x, p2.y);
+        continue;
+      }
+
+      let n1 = { x: v1.x / len1, y: v1.y / len1 };
+      let n2 = { x: v2.x / len2, y: v2.y / len2 };
+
+      // Calculate corner radius (constrained by segment lengths)
+      let radius = min(
+        ParamsManager.getScaledParam("pathCornerRadius"),
+        len1 / 2,
+        len2 / 2
+      );
+
+      // Calculate points before and after the corner
+      let beforeCorner = {
+        x: p2.x - n1.x * radius,
+        y: p2.y - n1.y * radius,
+      };
+
+      let afterCorner = {
+        x: p2.x + n2.x * radius,
+        y: p2.y + n2.y * radius,
+      };
+
+      // Draw line to the point before corner
+      targetCanvas.vertex(beforeCorner.x, beforeCorner.y);
+
+      // Draw quadratic curve for the corner
+      targetCanvas.quadraticVertex(p2.x, p2.y, afterCorner.x, afterCorner.y);
+    }
+
+    // End at the last point
+    if (points.length > 1) {
+      targetCanvas.vertex(
+        points[points.length - 1].x,
+        points[points.length - 1].y
+      );
+    }
+
+    targetCanvas.endShape(ParamsManager.params.closedLoop ? CLOSE : OPEN);
+  },
+
+  drawBooleanUnionPathToCanvas(targetCanvas) {
+    if (!polybool) {
+      console.warn(
+        'PolyBool library not loaded. Add <script src="https://cdn.jsdelivr.net/npm/polybooljs@1.2.0/dist/polybool.min.js"></script> to your HTML'
+      );
+      this.drawRegularPathToCanvas(targetCanvas);
+      return;
+    }
+
+    // Enforce minimum spacing - using scaled pathShapeSpacing for comparison
+    const minSpacing = 10 * Utils.getGridScaleFactor();
+    if (ParamsManager.getScaledParam("pathShapeSpacing") < minSpacing) {
+      ParamsManager.params.pathShapeSpacing =
+        minSpacing / Utils.getGridScaleFactor();
+    }
+
+    let shapes = this.collectAllShapes();
+    if (shapes.length === 0) return;
+
+    // Use BooleanOperations for union
+    const unionResult = BooleanOperations.unionShapes(shapes);
+
+    if (unionResult) {
+      this.drawUnifiedShapeToCanvas(targetCanvas, unionResult);
+    }
+  },
+
+  drawUnifiedShapeToCanvas(targetCanvas, unionResult) {
+    if (!BooleanOperations.isValidPolygon(unionResult)) return;
+
+    // Filter out degenerate regions
+    const validRegions = unionResult.regions.filter(
+      (region) => region && region.length >= 3
+    );
+
+    if (validRegions.length === 0) return;
+
+    // Calculate bounds once for all operations
+    const bounds = BooleanOperations.getUnionBounds({ regions: validRegions });
+
+    // Direct scaling for blur
+    const scaledBlur =
+      ParamsManager.params.shapeBlur * window.currentScaleFactor;
+
+    // Special case: inside blur
+    if (scaledBlur > 0 && ParamsManager.params.insideBlur) {
+      this.drawInsideBlurredUnionToCanvas(targetCanvas, validRegions, bounds);
+      return;
+    }
+
+    // Apply blur if needed
+    if (scaledBlur > 0) {
+      targetCanvas.push();
+      targetCanvas.drawingContext.filter = `blur(${scaledBlur}px)`;
+    }
+
+    // Set appearance with direct scaling
+    if (ParamsManager.params.showPathShapeStroke) {
+      targetCanvas.stroke(ParamsManager.params.shapeStrokeColor);
+      targetCanvas.strokeWeight(
+        ParamsManager.params.pathShapeStrokeWeight * window.currentScaleFactor
+      );
+    } else {
+      targetCanvas.noStroke();
+    }
+
+    if (!ParamsManager.params.showFill) {
+      // Draw stroke-only if requested
+      if (ParamsManager.params.showPathShapeStroke) {
+        this.drawUnionWithContextToCanvas(
+          targetCanvas,
+          { regions: validRegions },
+          true
+        );
+      }
+    } else {
+      // Handle fill types
+      if (ParamsManager.params.gradientType === "none") {
+        // Solid fill
+        const c = color(ParamsManager.params.shapeFillColor);
+        c.setAlpha(ParamsManager.params.shapeAlpha * 255);
+        targetCanvas.fill(c);
+        this.drawUnionWithContextToCanvas(
+          targetCanvas,
+          { regions: validRegions },
+          false
+        );
+      } else if (ParamsManager.params.gradientType === "length") {
+        // Length-based gradient (use middle color for union)
+        let fillColor;
+        if (ParamsManager.params.gradientColors === "2") {
+          fillColor = lerpColor(
+            color(ParamsManager.params.shapeFillColor),
+            color(ParamsManager.params.shapeFillColor2),
+            0.5
+          );
+        } else {
+          fillColor = color(ParamsManager.params.shapeFillColor2);
+        }
+        fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
+        targetCanvas.fill(fillColor);
+        this.drawUnionWithContextToCanvas(
+          targetCanvas,
+          { regions: validRegions },
+          false
+        );
+      } else {
+        // Complex gradients
+        const gradient = BooleanOperations.createGradientForBounds(
+          targetCanvas.drawingContext,
+          bounds
+        );
+        targetCanvas.drawingContext.fillStyle = gradient;
+        this.drawUnionWithContextToCanvas(
+          targetCanvas,
+          { regions: validRegions },
+          false
+        );
+      }
+    }
+
+    // Reset filter if blur was applied
+    if (scaledBlur > 0) {
+      targetCanvas.drawingContext.filter = "none";
+      targetCanvas.pop();
+    }
+  },
+
+  drawUnionWithContextToCanvas(targetCanvas, unionResult, strokeOnly = false) {
+    // Scale stroke weight directly
+    const scaledStrokeWeight =
+      ParamsManager.params.pathShapeStrokeWeight * window.currentScaleFactor;
+
+    if (ParamsManager.params.showPathShapeStroke) {
+      targetCanvas.strokeWeight(scaledStrokeWeight);
+    }
+
+    // Create a function to draw a polygon with rounded corners
+    const drawRoundedPolygon = (canvas, points) => {
+      const cornerRadius = ParamsManager.getScaledParam("shapeCornerRadius");
+
+      // Skip if no rounding or very few points
+      if (cornerRadius <= 0 || points.length < 3) {
+        canvas.beginShape();
+        for (const pt of points) {
+          if (Array.isArray(pt) && pt.length >= 2) {
+            canvas.vertex(pt[0], pt[1]);
+          }
+        }
+        canvas.endShape(CLOSE);
+        return;
+      }
+
+      // Calculate min edge length to prevent excessive rounding
+      let minEdgeLength = Infinity;
+      for (let i = 0; i < points.length; i++) {
+        const p1 = points[i];
+        const p2 = points[(i + 1) % points.length];
+
+        if (!Array.isArray(p1) || !Array.isArray(p2)) continue;
+
+        const dx = p2[0] - p1[0];
+        const dy = p2[1] - p1[1];
+        const edgeLength = Math.sqrt(dx * dx + dy * dy);
+        minEdgeLength = Math.min(minEdgeLength, edgeLength);
+      }
+
+      // Constrain radius to 40% of the shortest edge
+      const safeRadius = Math.min(cornerRadius, minEdgeLength * 0.4);
+      if (safeRadius <= 0) {
+        // Fall back to standard polygon if radius is too small
+        canvas.beginShape();
+        for (const pt of points) {
+          if (Array.isArray(pt) && pt.length >= 2) {
+            canvas.vertex(pt[0], pt[1]);
+          }
+        }
+        canvas.endShape(CLOSE);
+        return;
+      }
+
+      // Start the shape
+      canvas.beginShape();
+
+      // Process each corner with rounded edges
+      for (let i = 0; i < points.length; i++) {
+        const curr = points[i];
+        const prev = points[(i - 1 + points.length) % points.length];
+        const next = points[(i + 1) % points.length];
+
+        if (
+          !Array.isArray(prev) ||
+          !Array.isArray(curr) ||
+          !Array.isArray(next)
+        )
+          continue;
+
+        // Calculate vectors
+        const v1 = [curr[0] - prev[0], curr[1] - prev[1]];
+        const v2 = [next[0] - curr[0], next[1] - curr[1]];
+
+        // Calculate lengths
+        const len1 = Math.sqrt(v1[0] * v1[0] + v1[1] * v1[1]);
+        const len2 = Math.sqrt(v2[0] * v2[0] + v2[1] * v2[1]);
+
+        if (len1 === 0 || len2 === 0) {
+          canvas.vertex(curr[0], curr[1]);
+          continue;
+        }
+
+        // Normalize vectors
+        const n1 = [v1[0] / len1, v1[1] / len1];
+        const n2 = [v2[0] / len2, v2[1] / len2];
+
+        // Calculate points before and after corner
+        const beforeCorner = {
+          x: curr[0] - n1[0] * safeRadius,
+          y: curr[1] - n1[1] * safeRadius,
+        };
+
+        const afterCorner = {
+          x: curr[0] + n2[0] * safeRadius,
+          y: curr[1] + n2[1] * safeRadius,
+        };
+
+        // Draw line to point before corner
+        canvas.vertex(beforeCorner.x, beforeCorner.y);
+
+        // Draw quadratic curve for the corner
+        canvas.quadraticVertex(curr[0], curr[1], afterCorner.x, afterCorner.y);
+      }
+
+      canvas.endShape(CLOSE);
+    };
+
+    // Process each region
+    for (let region of unionResult.regions) {
+      if (!region || region.length < 3) continue;
+
+      if (
+        ParamsManager.params.shapeCornerRadius > 0 &&
+        ParamsManager.params.shapeType === "rectangle"
+      ) {
+        // Draw with rounded corners using our custom function
+        drawRoundedPolygon(targetCanvas, region);
+      } else {
+        // Standard polygon drawing
+        targetCanvas.beginShape();
+        for (const point of region) {
+          if (Array.isArray(point) && point.length >= 2) {
+            targetCanvas.vertex(point[0], point[1]);
+          }
+        }
+        targetCanvas.endShape(CLOSE);
+      }
+    }
+  },
+
+  drawInsideBlurredUnionToCanvas(targetCanvas, validRegions, bounds) {
+    // Add padding to account for blur radius
+    const scaledBlur =
+      ParamsManager.params.shapeBlur * window.currentScaleFactor;
+    const bufferPadding = Math.ceil(scaledBlur * 3);
+
+    // Create temporary canvas with padding for blur
+    const tempCanvas = createGraphics(
+      bounds.width + bufferPadding * 2,
+      bounds.height + bufferPadding * 2
+    );
+
+    // Create a second canvas for the mask
+    const maskCanvas = createGraphics(
+      bounds.width + bufferPadding * 2,
+      bounds.height + bufferPadding * 2
+    );
+
+    // Configure shape drawing canvas
+    if (ParamsManager.params.showPathShapeStroke) {
+      tempCanvas.stroke(ParamsManager.params.shapeStrokeColor);
+      tempCanvas.strokeWeight(
+        ParamsManager.params.pathShapeStrokeWeight * window.currentScaleFactor
+      );
+    } else {
+      tempCanvas.noStroke();
+    }
+
+    // Handle fill color
+    if (ParamsManager.params.showFill) {
+      // Use the primary fill color initially
+      let fillColor = color(ParamsManager.params.shapeFillColor);
+      fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
+      tempCanvas.fill(fillColor);
+    } else {
+      tempCanvas.noFill();
+    }
+
+    // Configure mask canvas - always fill with white
+    maskCanvas.noStroke();
+    maskCanvas.fill(255);
+
+    // Translate to center shape in the padded canvas
+    const translationX = -bounds.minX + bufferPadding;
+    const translationY = -bounds.minY + bufferPadding;
+    tempCanvas.translate(translationX, translationY);
+    maskCanvas.translate(translationX, translationY);
+
+    // Draw all regions to both canvases
+    for (let region of validRegions) {
+      if (
+        ParamsManager.params.shapeCornerRadius > 0 &&
+        ParamsManager.params.shapeType === "rectangle"
+      ) {
+        // Draw with rounded corners
+        BooleanOperations.drawRoundedPolygon(tempCanvas, region);
+        BooleanOperations.drawRoundedPolygon(maskCanvas, region);
+      } else {
+        // Draw to main canvas
+        tempCanvas.beginShape();
+        for (let point of region) {
+          if (Array.isArray(point) && point.length >= 2) {
+            tempCanvas.vertex(point[0], point[1]);
+          }
+        }
+        tempCanvas.endShape(CLOSE);
+
+        // Draw to mask canvas
+        maskCanvas.beginShape();
+        for (let point of region) {
+          if (Array.isArray(point) && point.length >= 2) {
+            maskCanvas.vertex(point[0], point[1]);
+          }
+        }
+        maskCanvas.endShape(CLOSE);
+      }
+    }
+
+    // Apply blur with proper scaling
+    tempCanvas.filter(BLUR, scaledBlur / 2);
+
+    // Get image data from both canvases
+    const shapeImg = tempCanvas.get();
+    const maskImg = maskCanvas.get();
+
+    // Apply mask
+    shapeImg.mask(maskImg);
+
+    // Draw the masked image to the target canvas
+    targetCanvas.image(
+      shapeImg,
+      bounds.minX - bufferPadding,
+      bounds.minY - bufferPadding
+    );
+
+    // Apply gradient if needed
+    if (
+      ParamsManager.params.showFill &&
+      ParamsManager.params.gradientType !== "none" &&
+      ParamsManager.params.gradientType !== "length"
+    ) {
+      targetCanvas.push();
+
+      // Set composite operation to only affect the shape area
+      targetCanvas.drawingContext.globalCompositeOperation = "source-atop";
+
+      // Draw all regions to create a clipping path for the gradient
+      targetCanvas.beginShape();
+      targetCanvas.noStroke();
+      for (let region of validRegions) {
+        targetCanvas.beginContour();
+        for (let point of region) {
+          if (Array.isArray(point) && point.length >= 2) {
+            targetCanvas.vertex(point[0], point[1]);
+          }
+        }
+        targetCanvas.endContour();
+      }
+      targetCanvas.endShape();
+
+      // Create a gradient for the shape
+      const gradient = BooleanOperations.createGradientForBounds(
+        targetCanvas.drawingContext,
+        bounds
+      );
+
+      // Apply the gradient
+      targetCanvas.drawingContext.save();
+      targetCanvas.drawingContext.fillStyle = gradient;
+
+      // Fill the entire bounds area - it will be clipped by the shape
+      targetCanvas.rect(bounds.minX, bounds.minY, bounds.width, bounds.height);
+
+      targetCanvas.drawingContext.restore();
+      targetCanvas.pop();
+    }
+
+    // Clean up
+    tempCanvas.remove();
+    maskCanvas.remove();
+  },
+
+  drawRegularPathToCanvas(targetCanvas) {
+    let numSegments = ParamsManager.params.closedLoop
+      ? pathCells.length
+      : pathCells.length - 1;
+    let totalLength = 0;
+
+    // Calculate total path length
+    for (let i = 0; i < numSegments; i++) {
+      let currentCell = pathCells[i];
+      let nextCell = pathCells[(i + 1) % pathCells.length];
+      const { cellWidth, cellHeight } = Utils.getCellDimensions();
+      let x1 = currentCell.j * cellWidth + cellWidth / 2;
+      let y1 = currentCell.i * cellHeight + cellHeight / 2;
+      let x2 = nextCell.j * cellWidth + cellWidth / 2;
+      let y2 = nextCell.i * cellHeight + cellHeight / 2;
+      totalLength += dist(x1, y1, x2, y2);
+    }
+
+    let accumulatedLength = 0;
+    for (let i = 0; i < numSegments; i++) {
+      let currentCell = pathCells[i];
+      let nextCell = pathCells[(i + 1) % pathCells.length];
+      const { cellWidth, cellHeight } = Utils.getCellDimensions();
+      let x1 = currentCell.j * cellWidth + cellWidth / 2;
+      let y1 = currentCell.i * cellHeight + cellHeight / 2;
+      let x2 = nextCell.j * cellWidth + cellWidth / 2;
+      let y2 = nextCell.i * cellHeight + cellHeight / 2;
+
+      this.drawPathSegmentToCanvas(
+        targetCanvas,
+        x1,
+        y1,
+        x2,
+        y2,
+        currentCell,
+        i,
+        numSegments,
+        accumulatedLength,
+        totalLength
+      );
+
+      accumulatedLength += dist(x1, y1, x2, y2);
+    }
+  },
+
+  drawPathSegmentToCanvas(
+    targetCanvas,
+    x1,
+    y1,
+    x2,
+    y2,
+    currentCell,
+    segmentIndex,
+    totalSegments,
+    accumulatedLength,
+    totalLength
+  ) {
+    // Get scaled path shape spacing consistently
+    const scaledSpacing =
+      ParamsManager.params.pathShapeSpacing * window.currentScaleFactor;
+
+    // Calculate distance and number of shapes
+    let distance = dist(x1, y1, x2, y2);
+    let numShapes = floor(distance / scaledSpacing);
+    numShapes = max(1, numShapes);
+
+    let cellWidth =
+      ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
+    let cellHeight =
+      ParamsManager.params.gridSize / ParamsManager.params.gridHeight;
+
+    if (ParamsManager.params.pathType === "curved") {
+      let midX = (x1 + x2) / 2;
+      let midY = (y1 + y2) / 2;
+      let perpX = -(y2 - y1) * ParamsManager.params.curveAmount;
+      let perpY = (x2 - x1) * ParamsManager.params.curveAmount;
+
+      if (ParamsManager.params.constrainToGrid) {
+        let safeControlPoint = this.findSafeControlPoint(
+          x1,
+          y1,
+          x2,
+          y2,
+          midX,
+          midY,
+          perpX,
+          perpY,
+          cellWidth,
+          cellHeight
+        );
+        perpX = safeControlPoint.perpX;
+        perpY = safeControlPoint.perpY;
+      }
+
+      let steps =
+        floor(distance / ParamsManager.getScaledParam("pathShapeSpacing")) * 2;
+      for (let i = 0; i <= steps; i++) {
+        let t = i / steps;
+        let x = bezierPoint(x1, midX + perpX, midX + perpX, x2, t);
+        let y = bezierPoint(y1, midY + perpY, midY + perpY, y2, t);
+        let segmentLength = dist(x1, y1, x2, y2);
+        let currentLength = accumulatedLength + segmentLength * t;
+        let progress = currentLength / totalLength;
+
+        // Apply position noise only to interpolated shapes (not at t=0 or t=1)
+        if (i > 0 && i < steps) {
+          let noiseOffset = Utils.getPositionNoise(x, y, segmentIndex, i);
+          x += noiseOffset.x;
+          y += noiseOffset.y;
+        }
+
+        this.drawShapeAtPositionToCanvas(
+          targetCanvas,
+          x,
+          y,
+          cellWidth,
+          cellHeight,
+          currentCell,
+          progress,
+          totalSegments,
+          segmentIndex,
+          i // Pass the step index
+        );
+      }
+    } else if (ParamsManager.params.pathType === "continuous") {
+      // Similar implementation to straight path but with smooth transitions
+      for (let i = 0; i <= numShapes; i++) {
+        let t = i / numShapes;
+        let x = lerp(x1, x2, t);
+        let y = lerp(y1, y2, t);
+
+        // Apply position noise
+        if (i > 0 && i < numShapes) {
+          let noiseOffset = Utils.getPositionNoise(x, y, segmentIndex, i);
+          x += noiseOffset.x;
+          y += noiseOffset.y;
+        }
+
+        let currentLength = accumulatedLength + distance * t;
+        let progress = currentLength / totalLength;
+
+        this.drawShapeAtPositionToCanvas(
+          targetCanvas,
+          x,
+          y,
+          cellWidth,
+          cellHeight,
+          currentCell,
+          progress,
+          totalSegments,
+          segmentIndex,
+          i
+        );
+      }
+    } else {
+      // Straight path
+      for (let i = 0; i <= numShapes; i++) {
+        let t = i / numShapes;
+        let x = lerp(x1, x2, t);
+        let y = lerp(y1, y2, t);
+        let currentLength = accumulatedLength + distance * t;
+        let progress = currentLength / totalLength;
+
+        // Apply position noise only to interpolated shapes (not at t=0 or t=1)
+        if (i > 0 && i < numShapes) {
+          let noiseOffset = Utils.getPositionNoise(x, y, segmentIndex, i);
+          x += noiseOffset.x;
+          y += noiseOffset.y;
+        }
+
+        this.drawShapeAtPositionToCanvas(
+          targetCanvas,
+          x,
+          y,
+          cellWidth,
+          cellHeight,
+          currentCell,
+          progress,
+          totalSegments,
+          segmentIndex,
+          i
+        );
+      }
+    }
+
+    if (ParamsManager.params.alignShapesToGrid) {
+      // Find all grid cells that the line segment intersects with
+      let gridCells = PathGenerator.getIntersectingGridCells(x1, y1, x2, y2);
+
+      for (let cell of gridCells) {
+        // Use cell center for position
+        let cellCenterX = cell.j * cellWidth + cellWidth / 2;
+        let cellCenterY = cell.i * cellHeight + cellHeight / 2;
+
+        // Calculate progress along total path for color interpolation
+        let distFromStart = dist(x1, y1, cellCenterX, cellCenterY);
+        let segmentLength = dist(x1, y1, x2, y2);
+        let localProgress = distFromStart / segmentLength;
+        let currentLength = accumulatedLength + segmentLength * localProgress;
+        let progress = currentLength / totalLength;
+
+        this.drawShapeAtPositionToCanvas(
+          targetCanvas,
+          cellCenterX,
+          cellCenterY,
+          cellWidth,
+          cellHeight,
+          currentCell,
+          progress,
+          totalSegments,
+          segmentIndex,
+          cell.i * ParamsManager.params.gridWidth + cell.j
+        );
+      }
+    }
+  },
+
+  drawShapeAtPositionToCanvas(
+    targetCanvas,
+    x,
+    y,
+    width,
+    height,
+    currentCell,
+    progress,
+    totalSegments,
+    segmentIndex,
+    stepIndex
+  ) {
+    const options = {
+      cell: currentCell,
+      progress: progress,
+      totalSegments: totalSegments,
+      segmentIndex: segmentIndex,
+      stepIndex: stepIndex,
+    };
+
+    let scale = ParamsManager.params.shapeSize;
+
+    // Apply size noise
+    let sizeNoiseFactor = Utils.getSizeNoise(segmentIndex, stepIndex);
+    scale *= sizeNoiseFactor;
+
+    let scaledWidth = width * scale;
+    let scaledHeight = height * scale;
+
+    // Check if shape extends beyond padding boundary
+    let position = Utils.adjustPositionToBounds(
+      x,
+      y,
+      scaledWidth,
+      scaledHeight
+    );
+
+    // Apply shape blur if needed
+    const scaledBlur =
+      ParamsManager.params.shapeBlur * window.currentScaleFactor;
+    if (scaledBlur > 0) {
+      if (ParamsManager.params.insideBlur) {
+        // For inside blur, we need to create a mask
+        this.drawInsideBlurredShapeToCanvas(
+          targetCanvas,
+          position.x,
+          position.y,
+          scaledWidth,
+          scaledHeight,
+          progress
+        );
+        return;
+      }
+
+      targetCanvas.push();
+      targetCanvas.drawingContext.filter = `blur(${scaledBlur}px)`;
+    }
+
+    // Draw the shape
+    targetCanvas.push();
+    targetCanvas.translate(
+      position.x - scaledWidth / 2,
+      position.y - scaledHeight / 2
+    );
+
+    // Set up appearance
+    if (ParamsManager.params.showPathShapeStroke) {
+      targetCanvas.stroke(ParamsManager.params.shapeStrokeColor);
+      targetCanvas.strokeWeight(
+        ParamsManager.params.pathShapeStrokeWeight * window.currentScaleFactor
+      );
+    } else {
+      targetCanvas.noStroke();
+    }
+
+    // Handle fill based on parameters
+    if (ParamsManager.params.showFill) {
+      if (ParamsManager.params.gradientType === "none") {
+        let fillColor = color(ParamsManager.params.shapeFillColor);
+        fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
+        targetCanvas.fill(fillColor);
+      } else if (
+        ParamsManager.params.gradientType === "length" &&
+        progress !== null
+      ) {
+        let fillColor;
+        if (ParamsManager.params.gradientColors === "2") {
+          fillColor = lerpColor(
+            color(ParamsManager.params.shapeFillColor),
+            color(ParamsManager.params.shapeFillColor2),
+            progress
+          );
+        } else {
+          fillColor =
+            progress < 0.5
+              ? lerpColor(
+                  color(ParamsManager.params.shapeFillColor),
+                  color(ParamsManager.params.shapeFillColor2),
+                  progress * 2
+                )
+              : lerpColor(
+                  color(ParamsManager.params.shapeFillColor2),
+                  color(ParamsManager.params.shapeFillColor3),
+                  (progress - 0.5) * 2
+                );
+        }
+        fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
+        targetCanvas.fill(fillColor);
+      } else {
+        // For complex gradients, we need to use the drawing context directly
+        const gradient = BooleanOperations.createGradientForBounds(
+          targetCanvas.drawingContext,
+          {
+            minX: 0,
+            minY: 0,
+            maxX: scaledWidth,
+            maxY: scaledHeight,
+            width: scaledWidth,
+            height: scaledHeight,
+          }
+        );
+
+        targetCanvas.drawingContext.fillStyle = gradient;
+        targetCanvas.noFill(); // This prevents p5.js from overriding our fillStyle
+      }
+    } else {
+      targetCanvas.noFill();
+    }
+
+    // Draw the shape
+    if (ParamsManager.params.shapeType === "rectangle") {
+      if (ParamsManager.getScaledParam("shapeCornerRadius") > 0) {
+        let radius = min(
+          ParamsManager.getScaledParam("shapeCornerRadius"),
+          scaledWidth / 2,
+          scaledHeight / 2
+        );
+
+        if (
+          ParamsManager.params.gradientType !== "none" &&
+          ParamsManager.params.gradientType !== "length" &&
+          ParamsManager.params.showFill
+        ) {
+          // For gradient with rounded corners, we need to use path drawing API
+          let ctx = targetCanvas.drawingContext;
+          ctx.beginPath();
+          ctx.moveTo(radius, 0);
+          ctx.lineTo(scaledWidth - radius, 0);
+          ctx.quadraticCurveTo(scaledWidth, 0, scaledWidth, radius);
+          ctx.lineTo(scaledWidth, scaledHeight - radius);
+          ctx.quadraticCurveTo(
+            scaledWidth,
+            scaledHeight,
+            scaledWidth - radius,
+            scaledHeight
+          );
+          ctx.lineTo(radius, scaledHeight);
+          ctx.quadraticCurveTo(0, scaledHeight, 0, scaledHeight - radius);
+          ctx.lineTo(0, radius);
+          ctx.quadraticCurveTo(0, 0, radius, 0);
+          ctx.closePath();
+          ctx.fill();
+
+          if (ParamsManager.params.showPathShapeStroke) {
+            ctx.stroke();
+          }
+        } else {
+          targetCanvas.rect(0, 0, scaledWidth, scaledHeight, radius);
+        }
+      } else {
+        if (
+          ParamsManager.params.gradientType !== "none" &&
+          ParamsManager.params.gradientType !== "length" &&
+          ParamsManager.params.showFill
+        ) {
+          // For gradient rectangles
+          let ctx = targetCanvas.drawingContext;
+          if (ParamsManager.params.showPathShapeStroke) {
+            ctx.fillRect(0, 0, scaledWidth, scaledHeight);
+            ctx.strokeRect(0, 0, scaledWidth, scaledHeight);
+          } else {
+            ctx.fillRect(0, 0, scaledWidth, scaledHeight);
+          }
+        } else {
+          targetCanvas.rect(0, 0, scaledWidth, scaledHeight);
+        }
+      }
+    } else if (ParamsManager.params.shapeType === "ellipse") {
+      if (
+        ParamsManager.params.gradientType !== "none" &&
+        ParamsManager.params.gradientType !== "length" &&
+        ParamsManager.params.showFill
+      ) {
+        // For gradient ellipses
+        let ctx = targetCanvas.drawingContext;
+        ctx.beginPath();
+        ctx.ellipse(
+          scaledWidth / 2,
+          scaledHeight / 2,
+          scaledWidth / 2,
+          scaledHeight / 2,
+          0,
+          0,
+          TWO_PI
+        );
+        ctx.fill();
+        if (ParamsManager.params.showPathShapeStroke) {
+          ctx.stroke();
+        }
+      } else {
+        targetCanvas.ellipse(
+          scaledWidth / 2,
+          scaledHeight / 2,
+          scaledWidth,
+          scaledHeight
+        );
+      }
+    }
+
+    targetCanvas.pop();
+
+    // Reset blur filter if applied
+    if (scaledBlur > 0) {
+      targetCanvas.drawingContext.filter = "none";
+      targetCanvas.pop();
+    }
+  },
+
+  drawInsideBlurredShapeToCanvas(targetCanvas, x, y, width, height, progress) {
+    // Create temporary canvases for shape and mask
+    const tempCanvas = createGraphics(width * 3, height * 3);
+    const maskCanvas = createGraphics(width * 3, height * 3);
+
+    // Center translation
+    const tx = width * 1.5 - width / 2;
+    const ty = height * 1.5 - height / 2;
+
+    // Configure shape drawing on temp canvas
+    if (ParamsManager.params.showPathShapeStroke) {
+      tempCanvas.stroke(ParamsManager.params.shapeStrokeColor);
+      tempCanvas.strokeWeight(
+        ParamsManager.params.pathShapeStrokeWeight * window.currentScaleFactor
+      );
+    } else {
+      tempCanvas.noStroke();
+    }
+
+    // Set fill based on parameters
+    if (ParamsManager.params.showFill) {
+      if (ParamsManager.params.gradientType === "none") {
+        let fillColor = color(ParamsManager.params.shapeFillColor);
+        fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
+        tempCanvas.fill(fillColor);
+      } else if (
+        ParamsManager.params.gradientType === "length" &&
+        progress !== null
+      ) {
+        let fillColor = this._getProgressColor(progress);
+        fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
+        tempCanvas.fill(fillColor);
+      } else {
+        // For gradients, use solid fill initially; we'll apply gradient later
+        let fillColor = color(ParamsManager.params.shapeFillColor);
+        fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
+        tempCanvas.fill(fillColor);
+      }
+    } else {
+      tempCanvas.noFill();
+    }
+
+    // Configure mask canvas - always fill with white
+    maskCanvas.noStroke();
+    maskCanvas.fill(255);
+
+    // Draw the shape on both canvases
+    tempCanvas.push();
+    maskCanvas.push();
+
+    tempCanvas.translate(tx, ty);
+    maskCanvas.translate(tx, ty);
+
+    // Draw based on shape type
+    if (ParamsManager.params.shapeType === "rectangle") {
+      const radius = min(
+        ParamsManager.getScaledParam("shapeCornerRadius"),
+        width / 2,
+        height / 2
+      );
+
+      if (radius > 0) {
+        tempCanvas.rect(0, 0, width, height, radius);
+        maskCanvas.rect(0, 0, width, height, radius);
+      } else {
+        tempCanvas.rect(0, 0, width, height);
+        maskCanvas.rect(0, 0, width, height);
+      }
+    } else {
+      tempCanvas.ellipse(width / 2, height / 2, width, height);
+      maskCanvas.ellipse(width / 2, height / 2, width, height);
+    }
+
+    tempCanvas.pop();
+    maskCanvas.pop();
+
+    // Apply blur to the shape
+    tempCanvas.filter(
+      BLUR,
+      (ParamsManager.params.shapeBlur * window.currentScaleFactor) / 2
+    );
+
+    // Get image data from both canvases
+    const shapeImg = tempCanvas.get();
+    const maskImg = maskCanvas.get();
+
+    // Apply mask
+    shapeImg.mask(maskImg);
+
+    // Draw the masked image to target canvas
+    targetCanvas.image(
+      shapeImg,
+      x - width / 2 - tx + width * 1.5,
+      y - height / 2 - ty + height * 1.5
+    );
+
+    // Apply gradient if needed
+    if (
+      ParamsManager.params.showFill &&
+      ParamsManager.params.gradientType !== "none" &&
+      ParamsManager.params.gradientType !== "length"
+    ) {
+      targetCanvas.push();
+
+      // Set composite operation to only affect the shape area
+      targetCanvas.drawingContext.globalCompositeOperation = "source-atop";
+
+      // Translate to shape position
+      targetCanvas.translate(x - width / 2, y - height / 2);
+
+      // Create bounds for gradient
+      const bounds = {
+        minX: 0,
+        minY: 0,
+        maxX: width,
+        maxY: height,
+        width: width,
+        height: height,
+      };
+
+      // Create gradient
+      const gradient = BooleanOperations.createGradientForBounds(
+        targetCanvas.drawingContext,
+        bounds
+      );
+
+      // Apply gradient
+      targetCanvas.drawingContext.fillStyle = gradient;
+
+      // Draw shape to apply gradient
+      if (ParamsManager.params.shapeType === "rectangle") {
+        const radius = min(
+          ParamsManager.getScaledParam("shapeCornerRadius"),
+          width / 2,
+          height / 2
+        );
+
+        if (radius > 0) {
+          // Draw rounded rectangle
+          let ctx = targetCanvas.drawingContext;
+          ctx.beginPath();
+          ctx.moveTo(radius, 0);
+          ctx.lineTo(width - radius, 0);
+          ctx.quadraticCurveTo(width, 0, width, radius);
+          ctx.lineTo(width, height - radius);
+          ctx.quadraticCurveTo(width, height, width - radius, height);
+          ctx.lineTo(radius, height);
+          ctx.quadraticCurveTo(0, height, 0, height - radius);
+          ctx.lineTo(0, radius);
+          ctx.quadraticCurveTo(0, 0, radius, 0);
+          ctx.fill();
+        } else {
+          targetCanvas.rect(0, 0, width, height);
+        }
+      } else {
+        // Draw ellipse
+        let ctx = targetCanvas.drawingContext;
+        ctx.beginPath();
+        ctx.ellipse(width / 2, height / 2, width / 2, height / 2, 0, 0, TWO_PI);
+        ctx.fill();
+      }
+
+      targetCanvas.pop();
+    }
+
+    // Clean up
+    tempCanvas.remove();
+    maskCanvas.remove();
+  },
+
+  // Helper for color progression
+  _getProgressColor(progress) {
+    if (ParamsManager.params.gradientColors === "2") {
+      return lerpColor(
+        color(ParamsManager.params.shapeFillColor),
+        color(ParamsManager.params.shapeFillColor2),
+        progress
+      );
+    } else {
+      return progress < 0.5
+        ? lerpColor(
+            color(ParamsManager.params.shapeFillColor),
+            color(ParamsManager.params.shapeFillColor2),
+            progress * 2
+          )
+        : lerpColor(
+            color(ParamsManager.params.shapeFillColor2),
+            color(ParamsManager.params.shapeFillColor3),
+            (progress - 0.5) * 2
+          );
     }
   },
 };
