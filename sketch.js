@@ -1282,7 +1282,7 @@ const ColorPalette = {
 
   // Background colors
   backgroundColors: [
-    { name: "White", hex: "#ffffff" },
+    { name: "White", hex: "#fbfcf5" },
     { name: "Grey", hex: "#292e34" },
   ],
 
