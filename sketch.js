@@ -30,16 +30,16 @@ const DefaultParams = {
   showShape: true,
 
   // Color parameters
-  shapeFillColor: "#ff0000",
-  shapeFillColor2: "#0000ff",
-  shapeFillColor3: "#00ff00",
+  shapeFillColor: "Blue2",
+  shapeFillColor2: "Pink2",
+  shapeFillColor3: "Green2",
   shapeAlpha: 1.0,
   showFill: true,
-  backgroundColor: "#ffffff",
-  gridColor: "#000000",
-  shapeStrokeColor: "#000000",
-  pathStrokeColor: "#000000",
-  pathFillColor: "#666666",
+  backgroundColor: "White",
+  gridColor: "Blue1",
+  shapeStrokeColor: "Blue1",
+  pathStrokeColor: "Blue1",
+  pathFillColor: "Blue3",
 
   // Path parameters
   showPath: false,
@@ -82,7 +82,7 @@ const ShapeStylePresets = {
     pathStrokeJoin: "round",
     selectedCells: 10,
   },
-  grid: {
+  stairs: {
     booleanUnion: true,
     shapeCornerRadius: 20,
     showPathShapeStroke: true,
@@ -107,8 +107,6 @@ const ShapeStylePresets = {
     shapeType: "rectangle",
     showShape: true,
     showPath: false,
-    gradientType: "vertical",
-    gradientColors: "2",
   },
   pipe: {
     shapeType: "ellipse",
@@ -153,7 +151,7 @@ const ShapeStylePresets = {
   },
 };
 
-// Parameter Manager
+// Parameter Manager module
 const ParamsManager = {
   params: {},
 
@@ -247,6 +245,26 @@ const ParamsManager = {
   },
 
   applyStyle(style) {
+    // Store current color values before resetting
+    const colorSettings = {};
+
+    // List of all color-related properties to preserve
+    const colorProps = [
+      "backgroundColor",
+      "gridColor",
+      "shapeStrokeColor",
+      "pathStrokeColor",
+      "pathFillColor",
+      "shapeFillColor",
+      "shapeFillColor2",
+      "shapeFillColor3",
+    ];
+
+    // Save current color values
+    colorProps.forEach((prop) => {
+      colorSettings[prop] = this.params[prop];
+    });
+
     // First reset to defaults
     for (const key in DefaultParams) {
       if (
@@ -259,12 +277,61 @@ const ParamsManager = {
 
     // Apply the selected style preset
     if (ShapeStylePresets[style]) {
-      Object.assign(this.params, ShapeStylePresets[style]);
+      // For any color property in the style preset, convert from hex to name if needed
+      const styledParams = { ...ShapeStylePresets[style] };
+
+      // Convert any hex colors in the style preset to names for UI display
+      colorProps.forEach((prop) => {
+        if (styledParams[prop] && styledParams[prop].startsWith("#")) {
+          styledParams[prop] =
+            ColorPalette.getNameByHex(styledParams[prop]) || styledParams[prop];
+        }
+      });
+
+      Object.assign(this.params, styledParams);
     }
 
-    // Update UI and regenerate path
+    // Restore color settings if not specifically defined in the style preset
+    colorProps.forEach((prop) => {
+      if (
+        ShapeStylePresets[style] &&
+        !ShapeStylePresets[style].hasOwnProperty(prop)
+      ) {
+        this.params[prop] = colorSettings[prop];
+      }
+    });
+
+    // Update UI
     UIManager.updateAllControllers();
+
+    // After UI update, convert color names to hex for drawing
+    this.convertNamedColorsToHex();
+
+    // Regenerate path
     PathGenerator.generatePath();
+  },
+
+  convertNamedColorsToHex() {
+    // List of all color parameters to convert
+    const colorProps = [
+      "backgroundColor",
+      "gridColor",
+      "shapeStrokeColor",
+      "pathStrokeColor",
+      "pathFillColor",
+      "shapeFillColor",
+      "shapeFillColor2",
+      "shapeFillColor3",
+    ];
+
+    // Convert each color name to its hex value
+    colorProps.forEach((prop) => {
+      if (typeof this.params[prop] === "string") {
+        const hexValue = ColorPalette.getHexByName(this.params[prop]);
+        // Only update the actual parameter used for drawing
+        this.params[prop] = hexValue;
+      }
+    });
   },
 };
 
@@ -710,10 +777,7 @@ const GridSystem = {
     strokeWeight(ParamsManager.params.gridStrokeWeight);
     noFill();
 
-    let cellWidth =
-      ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
-    let cellHeight =
-      ParamsManager.params.gridSize / ParamsManager.params.gridHeight;
+    const { cellWidth, cellHeight } = Utils.getCellDimensions();
 
     // Draw the grid lines
     for (let i = 0; i <= ParamsManager.params.gridHeight; i++) {
@@ -747,7 +811,7 @@ const GridSystem = {
   },
 };
 
-// UI Manager
+// UI Manager module
 const UIManager = {
   gui: null,
   folders: {
@@ -772,6 +836,9 @@ const UIManager = {
     for (let key in this.folders) {
       this.folders[key].open();
     }
+
+    // Convert color names to hex values for all color parameters after UI setup
+    ParamsManager.convertNamedColorsToHex();
   },
 
   setupGeneralFolder() {
@@ -1023,29 +1090,105 @@ const UIManager = {
   setupColorFolder() {
     this.folders.color = this.gui.addFolder("Colors");
 
+    // Track original color names for UI display
+    ParamsManager.colorNames = {};
+
+    // For each color parameter, create an entry in colorNames
+    const colorProps = [
+      "backgroundColor",
+      "gridColor",
+      "shapeStrokeColor",
+      "pathStrokeColor",
+      "pathFillColor",
+      "shapeFillColor",
+      "shapeFillColor2",
+      "shapeFillColor3",
+    ];
+
+    // Initialize color names from default params
+    colorProps.forEach((prop) => {
+      ParamsManager.colorNames[prop] = ParamsManager.params[prop];
+    });
+
+    // Background color dropdown
     this.folders.color
-      .addColor(ParamsManager.params, "backgroundColor")
-      .name("Background Color");
+      .add(
+        ParamsManager.colorNames, // Use colorNames object for UI display
+        "backgroundColor",
+        ColorPalette.getBackgroundColorNames()
+      )
+      .name("Background Color")
+      .onChange((value) => {
+        // Update both name and hex
+        ParamsManager.colorNames.backgroundColor = value;
+        ParamsManager.params.backgroundColor = ColorPalette.getHexByName(value);
+      });
+
+    // Grid color dropdown
     this.folders.color
-      .addColor(ParamsManager.params, "gridColor")
-      .name("Grid Color");
+      .add(
+        ParamsManager.colorNames,
+        "gridColor",
+        ColorPalette.getMainColorNames()
+      )
+      .name("Grid Color")
+      .onChange((value) => {
+        ParamsManager.colorNames.gridColor = value;
+        ParamsManager.params.gridColor = ColorPalette.getHexByName(value);
+      });
+
+    // Shape stroke color dropdown
     this.folders.color
-      .addColor(ParamsManager.params, "shapeStrokeColor")
-      .name("Shape Stroke Color");
+      .add(
+        ParamsManager.colorNames,
+        "shapeStrokeColor",
+        ColorPalette.getMainColorNames()
+      )
+      .name("Shape Stroke Color")
+      .onChange((value) => {
+        ParamsManager.colorNames.shapeStrokeColor = value;
+        ParamsManager.params.shapeStrokeColor =
+          ColorPalette.getHexByName(value);
+      });
+
+    // Path stroke color dropdown
     this.folders.color
-      .addColor(ParamsManager.params, "pathStrokeColor")
-      .name("Path Stroke Color");
+      .add(
+        ParamsManager.colorNames,
+        "pathStrokeColor",
+        ColorPalette.getMainColorNames()
+      )
+      .name("Path Stroke Color")
+      .onChange((value) => {
+        ParamsManager.colorNames.pathStrokeColor = value;
+        ParamsManager.params.pathStrokeColor = ColorPalette.getHexByName(value);
+      });
+
+    // Path fill color dropdown
     this.folders.color
-      .addColor(ParamsManager.params, "pathFillColor")
-      .name("Path Fill Color");
+      .add(
+        ParamsManager.colorNames,
+        "pathFillColor",
+        ColorPalette.getMainColorNames()
+      )
+      .name("Path Fill Color")
+      .onChange((value) => {
+        ParamsManager.colorNames.pathFillColor = value;
+        ParamsManager.params.pathFillColor = ColorPalette.getHexByName(value);
+      });
+
+    // Show shape fill toggle
     this.folders.color
       .add(ParamsManager.params, "showFill")
       .name("Show Shape Fill");
+
+    // Shape transparency slider
     this.folders.color
       .add(ParamsManager.params, "shapeAlpha", 0, 1)
       .step(0.01)
       .name("Shape Transparency");
 
+    // Gradient type dropdown
     this.folders.color
       .add(ParamsManager.params, "gradientType", [
         "none",
@@ -1058,18 +1201,49 @@ const UIManager = {
       ])
       .name("Gradient Type");
 
+    // Gradient colors count
     this.folders.color
       .add(ParamsManager.params, "gradientColors", ["2", "3"])
       .name("Gradient Colors");
+
+    // Shape fill color 1 dropdown
     this.folders.color
-      .addColor(ParamsManager.params, "shapeFillColor")
-      .name("Shape Fill Color 1");
+      .add(
+        ParamsManager.colorNames,
+        "shapeFillColor",
+        ColorPalette.getMainColorNames()
+      )
+      .name("Shape Fill Color 1")
+      .onChange((value) => {
+        ParamsManager.colorNames.shapeFillColor = value;
+        ParamsManager.params.shapeFillColor = ColorPalette.getHexByName(value);
+      });
+
+    // Shape fill color 2 dropdown
     this.folders.color
-      .addColor(ParamsManager.params, "shapeFillColor2")
-      .name("Shape Fill Color 2");
+      .add(
+        ParamsManager.colorNames,
+        "shapeFillColor2",
+        ColorPalette.getMainColorNames()
+      )
+      .name("Shape Fill Color 2")
+      .onChange((value) => {
+        ParamsManager.colorNames.shapeFillColor2 = value;
+        ParamsManager.params.shapeFillColor2 = ColorPalette.getHexByName(value);
+      });
+
+    // Shape fill color 3 dropdown
     this.folders.color
-      .addColor(ParamsManager.params, "shapeFillColor3")
-      .name("Shape Fill Color 3");
+      .add(
+        ParamsManager.colorNames,
+        "shapeFillColor3",
+        ColorPalette.getMainColorNames()
+      )
+      .name("Shape Fill Color 3")
+      .onChange((value) => {
+        ParamsManager.colorNames.shapeFillColor3 = value;
+        ParamsManager.params.shapeFillColor3 = ColorPalette.getHexByName(value);
+      });
   },
 
   updateAllControllers() {
@@ -1079,6 +1253,85 @@ const UIManager = {
         controller.updateDisplay();
       }
     }
+  },
+};
+
+// Color Palette module
+const ColorPalette = {
+  // Main palette colors
+  mainColors: [
+    { name: "Yellow1", hex: "#a69f19" },
+    { name: "Yellow2", hex: "#f4ef9b" },
+    { name: "Yellow3", hex: "#fbf9db" },
+    { name: "Green1", hex: "#284325" },
+    { name: "Green2", hex: "#6fa369" },
+    { name: "Green3", hex: "#d9e8d9" },
+    { name: "Pink1", hex: "#731a4d" },
+    { name: "Pink2", hex: "#dd7cb1" },
+    { name: "Pink3", hex: "#f4d1e5" },
+    { name: "Purple1", hex: "#53396a" },
+    { name: "Purple2", hex: "#ab8fc3" },
+    { name: "Purple3", hex: "#e1d8e9" },
+    { name: "Orange1", hex: "#6c150f" },
+    { name: "Orange2", hex: "#e74310" },
+    { name: "Orange3", hex: "#F9B99F" },
+    { name: "Blue1", hex: "#1c3966" },
+    { name: "Blue2", hex: "#195da9" },
+    { name: "Blue3", hex: "#97bde6" },
+  ],
+
+  // Background colors
+  backgroundColors: [
+    { name: "White", hex: "#ffffff" },
+    { name: "Grey", hex: "#292e34" },
+  ],
+
+  // Get array of all color names for dropdown
+  getMainColorNames() {
+    return this.mainColors.map((color) => color.name);
+  },
+
+  // Get array of all background color names for dropdown
+  getBackgroundColorNames() {
+    return [
+      ...this.getMainColorNames(),
+      ...this.backgroundColors.map((color) => color.name),
+    ];
+  },
+
+  // Get hex code by color name
+  getHexByName(name) {
+    // Search in main colors first
+    const mainColor = this.mainColors.find((color) => color.name === name);
+    if (mainColor) return mainColor.hex;
+
+    // Then search in background colors
+    const bgColor = this.backgroundColors.find((color) => color.name === name);
+    if (bgColor) return bgColor.hex;
+
+    // If not found, return the input (might be a hex value)
+    return name;
+  },
+
+  // Get color name by hex code
+  getNameByHex(hex) {
+    // Normalize hex to lowercase
+    const normalizedHex = hex.toLowerCase();
+
+    // Search in main colors first
+    const mainColor = this.mainColors.find(
+      (color) => color.hex.toLowerCase() === normalizedHex
+    );
+    if (mainColor) return mainColor.name;
+
+    // Then search in background colors
+    const bgColor = this.backgroundColors.find(
+      (color) => color.hex.toLowerCase() === normalizedHex
+    );
+    if (bgColor) return bgColor.name;
+
+    // If not found, return the hex
+    return hex;
   },
 };
 
@@ -1096,6 +1349,9 @@ function setup() {
   }
 
   UIManager.setupGUI();
+
+  // Convert color names to hex values for all color parameters
+  ParamsManager.convertNamedColorsToHex();
 
   PathGenerator.generatePath();
 }
@@ -1179,10 +1435,7 @@ const PathRenderer = {
     const numSegments = ParamsManager.params.closedLoop
       ? pathCells.length
       : pathCells.length - 1;
-    const cellWidth =
-      ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
-    const cellHeight =
-      ParamsManager.params.gridSize / ParamsManager.params.gridHeight;
+    const { cellWidth, cellHeight } = Utils.getCellDimensions();
 
     // Skip drawing if both stroke and fill are disabled
     if (!ParamsManager.params.showPath && !ParamsManager.params.fillPath) {
@@ -1530,10 +1783,7 @@ const PathRenderer = {
     for (let i = 0; i < numSegments; i++) {
       let currentCell = pathCells[i];
       let nextCell = pathCells[(i + 1) % pathCells.length];
-      let cellWidth =
-        ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
-      let cellHeight =
-        ParamsManager.params.gridSize / ParamsManager.params.gridHeight;
+      const { cellWidth, cellHeight } = Utils.getCellDimensions();
       let x1 = currentCell.j * cellWidth + cellWidth / 2;
       let y1 = currentCell.i * cellHeight + cellHeight / 2;
       let x2 = nextCell.j * cellWidth + cellWidth / 2;
@@ -1545,10 +1795,7 @@ const PathRenderer = {
     for (let i = 0; i < numSegments; i++) {
       let currentCell = pathCells[i];
       let nextCell = pathCells[(i + 1) % pathCells.length];
-      let cellWidth =
-        ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
-      let cellHeight =
-        ParamsManager.params.gridSize / ParamsManager.params.gridHeight;
+      const { cellWidth, cellHeight } = Utils.getCellDimensions();
       let x1 = currentCell.j * cellWidth + cellWidth / 2;
       let y1 = currentCell.i * cellHeight + cellHeight / 2;
       let x2 = nextCell.j * cellWidth + cellWidth / 2;
@@ -1622,10 +1869,7 @@ const PathRenderer = {
     for (let i = 0; i < numSegments; i++) {
       let currentCell = pathCells[i];
       let nextCell = pathCells[(i + 1) % pathCells.length];
-      let cellWidth =
-        ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
-      let cellHeight =
-        ParamsManager.params.gridSize / ParamsManager.params.gridHeight;
+      const { cellWidth, cellHeight } = Utils.getCellDimensions();
       let x1 = currentCell.j * cellWidth + cellWidth / 2;
       let y1 = currentCell.i * cellHeight + cellHeight / 2;
       let x2 = nextCell.j * cellWidth + cellWidth / 2;
@@ -1637,10 +1881,7 @@ const PathRenderer = {
     for (let i = 0; i < numSegments; i++) {
       let currentCell = pathCells[i];
       let nextCell = pathCells[(i + 1) % pathCells.length];
-      let cellWidth =
-        ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
-      let cellHeight =
-        ParamsManager.params.gridSize / ParamsManager.params.gridHeight;
+      const { cellWidth, cellHeight } = Utils.getCellDimensions();
       let x1 = currentCell.j * cellWidth + cellWidth / 2;
       let y1 = currentCell.i * cellHeight + cellHeight / 2;
       let x2 = nextCell.j * cellWidth + cellWidth / 2;
@@ -2141,135 +2382,58 @@ const ShapeRenderer = {
   },
 
   drawInsideBlurredShape(x, y, width, height, progress) {
-    // Create graphics buffer for blurred shape
-    let shapeBuffer = createGraphics(width * 1.5, height * 1.5);
-    shapeBuffer.translate(width * 0.25, height * 0.25);
-
-    // Apply blur
-    shapeBuffer.drawingContext.filter = `blur(${ParamsManager.params.shapeBlur}px)`;
-
-    // Set stroke properties
-    if (ParamsManager.params.showPathShapeStroke) {
-      shapeBuffer.stroke(ParamsManager.params.shapeStrokeColor);
-      shapeBuffer.strokeWeight(ParamsManager.params.pathShapeStrokeWeight);
-    } else {
-      shapeBuffer.noStroke();
-    }
-
-    // Set fill based on parameters
-    if (ParamsManager.params.showFill) {
-      if (ParamsManager.params.gradientType === "none") {
-        let fillColor = color(ParamsManager.params.shapeFillColor);
-        fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
-        shapeBuffer.fill(fillColor);
-      } else if (
-        ParamsManager.params.gradientType === "length" &&
-        progress !== null
-      ) {
-        let fillColor;
-        if (ParamsManager.params.gradientColors === "2") {
-          fillColor = lerpColor(
-            color(ParamsManager.params.shapeFillColor),
-            color(ParamsManager.params.shapeFillColor2),
-            progress
-          );
+    // Use the unified masking system
+    const result = Utils.createMaskedGraphics(
+      width,
+      height,
+      (shapeBuffer, maskBuffer) => {
+        // Configure shape buffer
+        if (ParamsManager.params.showPathShapeStroke) {
+          shapeBuffer.stroke(ParamsManager.params.shapeStrokeColor);
+          shapeBuffer.strokeWeight(ParamsManager.params.pathShapeStrokeWeight);
         } else {
-          let colors = [
-            color(ParamsManager.params.shapeFillColor),
-            color(ParamsManager.params.shapeFillColor2),
-            color(ParamsManager.params.shapeFillColor3),
-          ];
-
-          fillColor =
-            progress < 0.5
-              ? lerpColor(colors[0], colors[1], progress * 2)
-              : lerpColor(colors[1], colors[2], (progress - 0.5) * 2);
+          shapeBuffer.noStroke();
         }
-        fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
-        shapeBuffer.fill(fillColor);
-      } else {
-        // Use solid color for complex gradients
-        let fillColor = color(ParamsManager.params.shapeFillColor);
-        fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
-        shapeBuffer.fill(fillColor);
-      }
-    } else {
-      shapeBuffer.noFill();
-    }
 
-    // Draw the shape
-    if (ParamsManager.params.shapeType === "rectangle") {
-      if (ParamsManager.params.shapeCornerRadius > 0) {
-        let radius = min(
-          ParamsManager.params.shapeCornerRadius,
-          width / 2,
-          height / 2
-        );
-        shapeBuffer.rect(0, 0, width, height, radius);
-      } else {
-        shapeBuffer.rect(0, 0, width, height);
-      }
-    } else if (ParamsManager.params.shapeType === "ellipse") {
-      shapeBuffer.ellipse(width / 2, height / 2, width, height);
-    }
+        // Set fill based on parameters
+        if (ParamsManager.params.showFill) {
+          if (ParamsManager.params.gradientType === "none") {
+            let fillColor = color(ParamsManager.params.shapeFillColor);
+            fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
+            shapeBuffer.fill(fillColor);
+          } else if (
+            ParamsManager.params.gradientType === "length" &&
+            progress !== null
+          ) {
+            let fillColor = this._getProgressColor(progress);
+            fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
+            shapeBuffer.fill(fillColor);
+          } else {
+            // Use solid color for complex gradients
+            let fillColor = color(ParamsManager.params.shapeFillColor);
+            fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
+            shapeBuffer.fill(fillColor);
+          }
+        } else {
+          shapeBuffer.noFill();
+        }
 
-    // Create mask buffer
-    let maskBuffer = createGraphics(width * 1.5, height * 1.5);
-    maskBuffer.translate(width * 0.25, height * 0.25);
-    maskBuffer.noStroke();
-    maskBuffer.fill(255); // White for mask
+        // Configure mask buffer
+        maskBuffer.noStroke();
+        maskBuffer.fill(255); // White for mask
 
-    // Draw the shape mask
-    if (ParamsManager.params.shapeType === "rectangle") {
-      if (ParamsManager.params.shapeCornerRadius > 0) {
-        let radius = min(
-          ParamsManager.params.shapeCornerRadius,
-          width / 2,
-          height / 2
-        );
-        maskBuffer.rect(0, 0, width, height, radius);
-      } else {
-        maskBuffer.rect(0, 0, width, height);
-      }
-    } else if (ParamsManager.params.shapeType === "ellipse") {
-      maskBuffer.ellipse(width / 2, height / 2, width, height);
-    }
-
-    // Convert Graphics to Images for masking
-    let shapeImg = createImage(width * 1.5, height * 1.5);
-    shapeImg.copy(
-      shapeBuffer,
-      0,
-      0,
-      width * 1.5,
-      height * 1.5,
-      0,
-      0,
-      width * 1.5,
-      height * 1.5
+        // Draw the shape on both buffers
+        this._drawShapeOnBuffer(shapeBuffer, 0, 0, width, height);
+        this._drawShapeOnBuffer(maskBuffer, 0, 0, width, height);
+      },
+      { blur: ParamsManager.params.shapeBlur }
     );
-
-    let maskImg = createImage(width * 1.5, height * 1.5);
-    maskImg.copy(
-      maskBuffer,
-      0,
-      0,
-      width * 1.5,
-      height * 1.5,
-      0,
-      0,
-      width * 1.5,
-      height * 1.5
-    );
-
-    // Apply the mask
-    shapeImg.mask(maskImg);
 
     // Draw the masked image
     image(
-      shapeImg,
-      x - width * 0.25 - width / 2,
-      y - height * 0.25 - height / 2
+      result.image,
+      x - width / 2 - result.offsetX,
+      y - height / 2 - result.offsetY
     );
 
     // Apply gradient if needed
@@ -2278,38 +2442,81 @@ const ShapeRenderer = {
       ParamsManager.params.gradientType !== "none" &&
       ParamsManager.params.gradientType !== "length"
     ) {
-      let ctx = drawingContext;
-      ctx.save();
-      ctx.globalCompositeOperation = "source-atop";
+      Utils.withContext(
+        drawingContext,
+        {
+          globalCompositeOperation: "source-atop",
+        },
+        (ctx) => {
+          translate(x - width / 2, y - height / 2);
+          let gradient = Utils.createGradient(ctx, width, height);
+          ctx.fillStyle = gradient;
 
-      translate(x - width / 2, y - height / 2);
-      let gradient = Utils.createGradient(ctx, width, height);
-      ctx.fillStyle = gradient;
-
-      if (ParamsManager.params.shapeType === "rectangle") {
-        if (ParamsManager.params.shapeCornerRadius > 0) {
-          let radius = min(
-            ParamsManager.params.shapeCornerRadius,
-            width / 2,
-            height / 2
-          );
-          ctx.beginPath();
-          Utils.roundedRect(ctx, 0, 0, width, height, radius);
-        } else {
-          ctx.fillRect(0, 0, width, height);
+          // Draw the shape for gradient
+          if (ParamsManager.params.shapeType === "rectangle") {
+            if (ParamsManager.params.shapeCornerRadius > 0) {
+              let radius = min(
+                ParamsManager.params.shapeCornerRadius,
+                width / 2,
+                height / 2
+              );
+              Utils.roundedRect(ctx, 0, 0, width, height, radius);
+            } else {
+              ctx.fillRect(0, 0, width, height);
+            }
+          } else if (ParamsManager.params.shapeType === "ellipse") {
+            ctx.beginPath();
+            ctx.ellipse(
+              width / 2,
+              height / 2,
+              width / 2,
+              height / 2,
+              0,
+              0,
+              TWO_PI
+            );
+            ctx.fill();
+          }
         }
-      } else if (ParamsManager.params.shapeType === "ellipse") {
-        ctx.beginPath();
-        ctx.ellipse(width / 2, height / 2, width / 2, height / 2, 0, 0, TWO_PI);
-        ctx.fill();
-      }
-
-      ctx.restore();
+      );
     }
+  },
 
-    // Clean up
-    shapeBuffer.remove();
-    maskBuffer.remove();
+  _drawShapeOnBuffer(buffer, x, y, width, height) {
+    if (ParamsManager.params.shapeType === "rectangle") {
+      if (ParamsManager.params.shapeCornerRadius > 0) {
+        let radius = min(
+          ParamsManager.params.shapeCornerRadius,
+          width / 2,
+          height / 2
+        );
+        buffer.rect(x, y, width, height, radius);
+      } else {
+        buffer.rect(x, y, width, height);
+      }
+    } else if (ParamsManager.params.shapeType === "ellipse") {
+      buffer.ellipse(x + width / 2, y + height / 2, width, height);
+    }
+  },
+
+  _getProgressColor(progress) {
+    if (ParamsManager.params.gradientColors === "2") {
+      return lerpColor(
+        color(ParamsManager.params.shapeFillColor),
+        color(ParamsManager.params.shapeFillColor2),
+        progress
+      );
+    } else {
+      const colors = [
+        color(ParamsManager.params.shapeFillColor),
+        color(ParamsManager.params.shapeFillColor2),
+        color(ParamsManager.params.shapeFillColor3),
+      ];
+
+      return progress < 0.5
+        ? lerpColor(colors[0], colors[1], progress * 2)
+        : lerpColor(colors[1], colors[2], (progress - 0.5) * 2);
+    }
   },
 
   drawShapeWithGradient(x, y, width, height, progress = null) {
@@ -2582,7 +2789,9 @@ const BooleanOperations = {
   },
 
   createGradientForBounds(ctx, bounds) {
-    let gradient;
+    // Get params and ensure we have hex colors, not names
+    const params = Utils.ensureHexColors(ParamsManager.params);
+
     const {
       gradientType,
       shapeFillColor,
@@ -2590,7 +2799,10 @@ const BooleanOperations = {
       shapeFillColor3,
       gradientColors,
       shapeAlpha,
-    } = ParamsManager.params;
+    } = params;
+
+    // Create the appropriate gradient based on bounds
+    let gradient;
 
     switch (gradientType) {
       case "horizontal":
@@ -2631,38 +2843,19 @@ const BooleanOperations = {
         gradient = ctx.createLinearGradient(bounds.minX, 0, bounds.maxX, 0);
     }
 
-    // Add color stops with proper alpha
-    const c1 = color(shapeFillColor);
-    const c2 = color(shapeFillColor2);
-    const c3 = color(shapeFillColor3);
-    const alpha = shapeAlpha;
+    // Add color stops
+    const colors = [shapeFillColor, shapeFillColor2];
+    if (gradientColors === "3") {
+      colors.push(shapeFillColor3);
+    }
 
-    c1.setAlpha(alpha * 255);
-    c2.setAlpha(alpha * 255);
-    c3.setAlpha(alpha * 255);
-
-    if (gradientColors === "2") {
-      gradient.addColorStop(
-        0,
-        `rgba(${red(c1)}, ${green(c1)}, ${blue(c1)}, ${alpha})`
-      );
-      gradient.addColorStop(
-        1,
-        `rgba(${red(c2)}, ${green(c2)}, ${blue(c2)}, ${alpha})`
-      );
+    if (colors.length === 2) {
+      Utils.createColorStop(gradient, 0, colors[0], shapeAlpha);
+      Utils.createColorStop(gradient, 1, colors[1], shapeAlpha);
     } else {
-      gradient.addColorStop(
-        0,
-        `rgba(${red(c1)}, ${green(c1)}, ${blue(c1)}, ${alpha})`
-      );
-      gradient.addColorStop(
-        0.5,
-        `rgba(${red(c2)}, ${green(c2)}, ${blue(c2)}, ${alpha})`
-      );
-      gradient.addColorStop(
-        1,
-        `rgba(${red(c3)}, ${green(c3)}, ${blue(c3)}, ${alpha})`
-      );
+      Utils.createColorStop(gradient, 0, colors[0], shapeAlpha);
+      Utils.createColorStop(gradient, 0.5, colors[1], shapeAlpha);
+      Utils.createColorStop(gradient, 1, colors[2], shapeAlpha);
     }
 
     return gradient;
@@ -2747,131 +2940,68 @@ const BooleanOperations = {
   },
 
   drawInsideBlurredUnion(validRegions, bounds) {
-    const bufferSize = max(bounds.width, bounds.height) * 1.5;
-    const offsetX = (bufferSize - bounds.width) / 2;
-    const offsetY = (bufferSize - bounds.height) / 2;
+    const result = Utils.createMaskedGraphics(
+      bounds.width,
+      bounds.height,
+      (shapeBuffer, maskBuffer) => {
+        // Translate to align with bounds
+        const translation = { x: -bounds.minX, y: -bounds.minY };
+        shapeBuffer.translate(translation.x, translation.y);
+        maskBuffer.translate(translation.x, translation.y);
 
-    // Create buffer for blurred shape
-    const shapeBuffer = createGraphics(bufferSize, bufferSize);
-    shapeBuffer.translate(-bounds.minX + offsetX, -bounds.minY + offsetY);
+        // Configure shape buffer
+        if (ParamsManager.params.showPathShapeStroke) {
+          shapeBuffer.stroke(ParamsManager.params.shapeStrokeColor);
+          shapeBuffer.strokeWeight(ParamsManager.params.pathShapeStrokeWeight);
+        } else {
+          shapeBuffer.noStroke();
+        }
 
-    // Apply blur filter
-    shapeBuffer.drawingContext.filter = `blur(${ParamsManager.params.shapeBlur}px)`;
+        // Handle fill
+        if (!ParamsManager.params.showFill) {
+          shapeBuffer.noFill();
+        } else {
+          // Apply solid fill (gradient handled separately)
+          let fillColor = color(ParamsManager.params.shapeFillColor);
+          fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
+          shapeBuffer.fill(fillColor);
+        }
 
-    // Set appearance
-    if (ParamsManager.params.showPathShapeStroke) {
-      shapeBuffer.stroke(ParamsManager.params.shapeStrokeColor);
-      shapeBuffer.strokeWeight(ParamsManager.params.pathShapeStrokeWeight);
-    } else {
-      shapeBuffer.noStroke();
-    }
+        // Configure mask buffer
+        maskBuffer.noStroke();
+        maskBuffer.fill(255); // White for mask
 
-    // Handle fill
-    if (!ParamsManager.params.showFill) {
-      shapeBuffer.noFill();
-    } else {
-      // Apply solid fill (gradient handled separately)
-      let fillColor = color(ParamsManager.params.shapeFillColor);
-      fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
-      shapeBuffer.fill(fillColor);
-    }
-
-    // Draw all regions into buffer
-    for (let region of validRegions) {
-      if (
-        ParamsManager.params.shapeCornerRadius > 0 &&
-        ParamsManager.params.shapeType === "rectangle"
-      ) {
-        this.drawRoundedPolygon(
-          shapeBuffer,
-          region,
-          ParamsManager.params.shapeCornerRadius
-        );
-      } else {
-        shapeBuffer.beginShape();
-        for (let point of region) {
+        // Draw all regions into both buffers
+        for (let region of validRegions) {
           if (
-            Array.isArray(point) &&
-            point.length >= 2 &&
-            typeof point[0] === "number" &&
-            typeof point[1] === "number" &&
-            !isNaN(point[0]) &&
-            !isNaN(point[1])
+            ParamsManager.params.shapeCornerRadius > 0 &&
+            ParamsManager.params.shapeType === "rectangle"
           ) {
-            shapeBuffer.vertex(point[0], point[1]);
+            this.drawRoundedPolygon(
+              shapeBuffer,
+              region,
+              ParamsManager.params.shapeCornerRadius
+            );
+            this.drawRoundedPolygon(
+              maskBuffer,
+              region,
+              ParamsManager.params.shapeCornerRadius
+            );
+          } else {
+            this._drawRegionToBuffer(shapeBuffer, region);
+            this._drawRegionToBuffer(maskBuffer, region);
           }
         }
-        shapeBuffer.endShape(CLOSE);
-      }
-    }
-
-    // Create mask buffer
-    const maskBuffer = createGraphics(bufferSize, bufferSize);
-    maskBuffer.translate(-bounds.minX + offsetX, -bounds.minY + offsetY);
-    maskBuffer.noStroke();
-    maskBuffer.fill(255); // White for mask
-
-    // Draw regions into mask
-    for (let region of validRegions) {
-      if (
-        ParamsManager.params.shapeCornerRadius > 0 &&
-        ParamsManager.params.shapeType === "rectangle"
-      ) {
-        this.drawRoundedPolygon(
-          maskBuffer,
-          region,
-          ParamsManager.params.shapeCornerRadius
-        );
-      } else {
-        maskBuffer.beginShape();
-        for (let point of region) {
-          if (
-            Array.isArray(point) &&
-            point.length >= 2 &&
-            typeof point[0] === "number" &&
-            typeof point[1] === "number" &&
-            !isNaN(point[0]) &&
-            !isNaN(point[1])
-          ) {
-            maskBuffer.vertex(point[0], point[1]);
-          }
-        }
-        maskBuffer.endShape(CLOSE);
-      }
-    }
-
-    // Convert Graphics to Images for masking
-    const shapeImg = createImage(bufferSize, bufferSize);
-    shapeImg.copy(
-      shapeBuffer,
-      0,
-      0,
-      bufferSize,
-      bufferSize,
-      0,
-      0,
-      bufferSize,
-      bufferSize
+      },
+      { blur: ParamsManager.params.shapeBlur }
     );
-
-    const maskImg = createImage(bufferSize, bufferSize);
-    maskImg.copy(
-      maskBuffer,
-      0,
-      0,
-      bufferSize,
-      bufferSize,
-      0,
-      0,
-      bufferSize,
-      bufferSize
-    );
-
-    // Apply mask
-    shapeImg.mask(maskImg);
 
     // Draw the masked image
-    image(shapeImg, bounds.minX - offsetX, bounds.minY - offsetY);
+    image(
+      result.image,
+      bounds.minX - result.offsetX,
+      bounds.minY - result.offsetY
+    );
 
     // Apply gradient if needed
     if (
@@ -2879,46 +3009,61 @@ const BooleanOperations = {
       ParamsManager.params.gradientType !== "none" &&
       ParamsManager.params.gradientType !== "length"
     ) {
-      const ctx = drawingContext;
-      ctx.save();
-      ctx.globalCompositeOperation = "source-atop";
+      Utils.withContext(
+        drawingContext,
+        {
+          globalCompositeOperation: "source-atop",
+        },
+        (ctx) => {
+          // Calculate gradient for the entire shape bounds
+          const gradient = this.createGradientForBounds(ctx, bounds);
+          ctx.fillStyle = gradient;
 
-      // Calculate gradient for the entire shape bounds
-      const gradient = this.createGradientForBounds(ctx, bounds);
-      ctx.fillStyle = gradient;
+          // Draw the shapes with the gradient
+          for (let region of validRegions) {
+            ctx.beginPath();
 
-      // Draw the shapes with the gradient
-      for (let region of validRegions) {
-        ctx.beginPath();
-
-        for (let i = 0; i < region.length; i++) {
-          const point = region[i];
-          if (
-            Array.isArray(point) &&
-            point.length >= 2 &&
-            typeof point[0] === "number" &&
-            typeof point[1] === "number" &&
-            !isNaN(point[0]) &&
-            !isNaN(point[1])
-          ) {
-            if (i === 0) {
-              ctx.moveTo(point[0], point[1]);
-            } else {
-              ctx.lineTo(point[0], point[1]);
+            for (let i = 0; i < region.length; i++) {
+              const point = region[i];
+              if (
+                Array.isArray(point) &&
+                point.length >= 2 &&
+                typeof point[0] === "number" &&
+                typeof point[1] === "number" &&
+                !isNaN(point[0]) &&
+                !isNaN(point[1])
+              ) {
+                if (i === 0) {
+                  ctx.moveTo(point[0], point[1]);
+                } else {
+                  ctx.lineTo(point[0], point[1]);
+                }
+              }
             }
+
+            ctx.closePath();
+            ctx.fill();
           }
         }
-
-        ctx.closePath();
-        ctx.fill();
-      }
-
-      ctx.restore();
+      );
     }
+  },
 
-    // Clean up
-    shapeBuffer.remove();
-    maskBuffer.remove();
+  _drawRegionToBuffer(buffer, region) {
+    buffer.beginShape();
+    for (let point of region) {
+      if (
+        Array.isArray(point) &&
+        point.length >= 2 &&
+        typeof point[0] === "number" &&
+        typeof point[1] === "number" &&
+        !isNaN(point[0]) &&
+        !isNaN(point[1])
+      ) {
+        buffer.vertex(point[0], point[1]);
+      }
+    }
+    buffer.endShape(CLOSE);
   },
 
   drawUnionWithContext(ctx, unionResult, strokeOnly = false) {
@@ -3160,81 +3305,30 @@ const Utils = {
   },
 
   createGradient(ctx, width, height) {
-    // Move existing createGradient code here
-    let gradient;
-    switch (ParamsManager.params.gradientType) {
-      case "horizontal":
-        gradient = ctx.createLinearGradient(0, 0, width, 0);
-        break;
-      case "vertical":
-        gradient = ctx.createLinearGradient(0, 0, 0, height);
-        break;
-      case "diagonal":
-        gradient = ctx.createLinearGradient(0, 0, width, height);
-        break;
-      case "radial":
-        gradient = ctx.createRadialGradient(
-          width / 2,
-          height / 2,
-          0,
-          width / 2,
-          height / 2,
-          max(width, height) / 2
-        );
-        break;
-      case "conic":
-        gradient = ctx.createConicGradient(-PI / 2, width / 2, height / 2);
-        break;
-      default:
-        gradient = ctx.createLinearGradient(0, 0, width, 0);
+    // Get params and ensure we have hex colors, not names
+    const params = Utils.ensureHexColors(ParamsManager.params);
+
+    const {
+      gradientType,
+      shapeFillColor,
+      shapeFillColor2,
+      shapeFillColor3,
+      gradientColors,
+      shapeAlpha,
+    } = params;
+
+    const colors = [shapeFillColor, shapeFillColor2];
+    if (gradientColors === "3") {
+      colors.push(shapeFillColor3);
     }
 
-    // Create colors with proper alpha value
-    let c1 = color(ParamsManager.params.shapeFillColor);
-    let c2 = color(ParamsManager.params.shapeFillColor2);
-    let c3 = color(ParamsManager.params.shapeFillColor3);
-
-    // Apply alpha to all colors
-    c1.setAlpha(ParamsManager.params.shapeAlpha * 255);
-    c2.setAlpha(ParamsManager.params.shapeAlpha * 255);
-    c3.setAlpha(ParamsManager.params.shapeAlpha * 255);
-
-    // Add color stops with rgba format to preserve transparency
-    if (ParamsManager.params.gradientColors === "2") {
-      gradient.addColorStop(
-        0,
-        `rgba(${red(c1)}, ${green(c1)}, ${blue(c1)}, ${
-          ParamsManager.params.shapeAlpha
-        })`
-      );
-      gradient.addColorStop(
-        1,
-        `rgba(${red(c2)}, ${green(c2)}, ${blue(c2)}, ${
-          ParamsManager.params.shapeAlpha
-        })`
-      );
-    } else {
-      gradient.addColorStop(
-        0,
-        `rgba(${red(c1)}, ${green(c1)}, ${blue(c1)}, ${
-          ParamsManager.params.shapeAlpha
-        })`
-      );
-      gradient.addColorStop(
-        0.5,
-        `rgba(${red(c2)}, ${green(c2)}, ${blue(c2)}, ${
-          ParamsManager.params.shapeAlpha
-        })`
-      );
-      gradient.addColorStop(
-        1,
-        `rgba(${red(c3)}, ${green(c3)}, ${blue(c3)}, ${
-          ParamsManager.params.shapeAlpha
-        })`
-      );
-    }
-
-    return gradient;
+    return this.createGradientWithStops(
+      ctx,
+      gradientType,
+      { width, height },
+      colors,
+      shapeAlpha
+    );
   },
 
   getPositionNoise(x, y, segmentIndex, stepIndex) {
@@ -3334,9 +3428,138 @@ const Utils = {
       return this.gradientCache[key];
     }
 
-    // Create new gradient with correct parameters
+    // Prepare colors array
+    const colors = [params.shapeFillColor, params.shapeFillColor2];
+    if (params.gradientColors === "3") {
+      colors.push(params.shapeFillColor3);
+    }
+
+    // Create gradient with the unified method
+    const gradient = this.createGradientWithStops(
+      ctx,
+      params.gradientType,
+      { width, height },
+      colors,
+      params.shapeAlpha
+    );
+
+    // Cache the gradient
+    this.gradientCache[key] = gradient;
+
+    return gradient;
+  },
+
+  getCellDimensions() {
+    const cellWidth =
+      ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
+    const cellHeight =
+      ParamsManager.params.gridSize / ParamsManager.params.gridHeight;
+    return { cellWidth, cellHeight };
+  },
+
+  // Add to Utils object
+  createMaskedGraphics(width, height, drawFn, options = {}) {
+    const { blur = 0, offset = { x: 0, y: 0 } } = options;
+
+    // Create buffers with some padding to handle blur
+    const bufferWidth = width * 1.5;
+    const bufferHeight = height * 1.5;
+
+    // Calculate offset for centering content in buffer
+    const bufferOffsetX = (bufferWidth - width) / 2;
+    const bufferOffsetY = (bufferHeight - height) / 2;
+
+    // Create buffers
+    const shapeBuffer = createGraphics(bufferWidth, bufferHeight);
+    const maskBuffer = createGraphics(bufferWidth, bufferHeight);
+
+    // Translate to accommodate offset and centering
+    shapeBuffer.translate(bufferOffsetX + offset.x, bufferOffsetY + offset.y);
+    maskBuffer.translate(bufferOffsetX + offset.x, bufferOffsetY + offset.y);
+
+    // Setup blur if needed
+    if (blur > 0) {
+      shapeBuffer.drawingContext.filter = `blur(${blur}px)`;
+    }
+
+    // Draw content to both buffers
+    drawFn(shapeBuffer, maskBuffer);
+
+    // Create images and apply masking
+    const shapeImg = createImage(bufferWidth, bufferHeight);
+    const maskImg = createImage(bufferWidth, bufferHeight);
+
+    shapeImg.copy(
+      shapeBuffer,
+      0,
+      0,
+      bufferWidth,
+      bufferHeight,
+      0,
+      0,
+      bufferWidth,
+      bufferHeight
+    );
+    maskImg.copy(
+      maskBuffer,
+      0,
+      0,
+      bufferWidth,
+      bufferHeight,
+      0,
+      0,
+      bufferWidth,
+      bufferHeight
+    );
+
+    // Apply mask
+    shapeImg.mask(maskImg);
+
+    // Clean up
+    shapeBuffer.remove();
+    maskBuffer.remove();
+
+    return {
+      image: shapeImg,
+      width: bufferWidth,
+      height: bufferHeight,
+      offsetX: bufferOffsetX,
+      offsetY: bufferOffsetY,
+    };
+  },
+
+  createColorStop(gradient, position, colorStr, alpha) {
+    const c = color(colorStr);
+    c.setAlpha(alpha * 255);
+    gradient.addColorStop(
+      position,
+      `rgba(${red(c)}, ${green(c)}, ${blue(c)}, ${alpha})`
+    );
+    return c;
+  },
+
+  createGradientWithStops(ctx, type, dimensions, colors, alpha) {
+    // Get gradient object
+    const gradient = this._createGradientObject(ctx, type, dimensions);
+
+    // Add color stops
+    if (colors.length === 2) {
+      this.createColorStop(gradient, 0, colors[0], alpha);
+      this.createColorStop(gradient, 1, colors[1], alpha);
+    } else if (colors.length >= 3) {
+      this.createColorStop(gradient, 0, colors[0], alpha);
+      this.createColorStop(gradient, 0.5, colors[1], alpha);
+      this.createColorStop(gradient, 1, colors[2], alpha);
+    }
+
+    return gradient;
+  },
+
+  _createGradientObject(ctx, type, dimensions) {
+    const { width, height } = dimensions;
     let gradient;
-    switch (params.gradientType) {
+
+    switch (type) {
       case "horizontal":
         gradient = ctx.createLinearGradient(0, 0, width, 0);
         break;
@@ -3363,41 +3586,33 @@ const Utils = {
         gradient = ctx.createLinearGradient(0, 0, width, 0);
     }
 
-    // Add color stops
-    const c1 = color(params.shapeFillColor);
-    const c2 = color(params.shapeFillColor2);
-    c1.setAlpha(params.shapeAlpha * 255);
-    c2.setAlpha(params.shapeAlpha * 255);
+    return gradient;
+  },
 
-    if (params.gradientColors === "2") {
-      gradient.addColorStop(
-        0,
-        `rgba(${red(c1)}, ${green(c1)}, ${blue(c1)}, ${params.shapeAlpha})`
-      );
-      gradient.addColorStop(
-        1,
-        `rgba(${red(c2)}, ${green(c2)}, ${blue(c2)}, ${params.shapeAlpha})`
-      );
-    } else {
-      const c3 = color(params.shapeFillColor3);
-      c3.setAlpha(params.shapeAlpha * 255);
-      gradient.addColorStop(
-        0,
-        `rgba(${red(c1)}, ${green(c1)}, ${blue(c1)}, ${params.shapeAlpha})`
-      );
-      gradient.addColorStop(
-        0.5,
-        `rgba(${red(c2)}, ${green(c2)}, ${blue(c2)}, ${params.shapeAlpha})`
-      );
-      gradient.addColorStop(
-        1,
-        `rgba(${red(c3)}, ${green(c3)}, ${blue(c3)}, ${params.shapeAlpha})`
-      );
+  getColorValue(colorNameOrHex) {
+    // If ColorPalette exists, try to get hex from name
+    if (ColorPalette) {
+      return ColorPalette.getHexByName(colorNameOrHex);
+    }
+    return colorNameOrHex; // Return as is if no palette
+  },
+
+  // Helper method to ensure we're working with hex values, not color names
+  ensureHexColors(colorObject) {
+    const result = {};
+
+    for (const key in colorObject) {
+      if (
+        typeof colorObject[key] === "string" &&
+        (key.toLowerCase().includes("color") ||
+          key.toLowerCase().includes("background"))
+      ) {
+        result[key] = this.getColorValue(colorObject[key]);
+      } else {
+        result[key] = colorObject[key];
+      }
     }
 
-    // Cache the gradient
-    this.gradientCache[key] = gradient;
-
-    return gradient;
+    return result;
   },
 };
