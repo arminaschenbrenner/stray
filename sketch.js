@@ -6,14 +6,18 @@ let cellSizes = {};
 // Global constants for default parameters
 const DefaultParams = {
   // Grid parameters
+  canvasSize: 570,
+  gridSize: 500,
   gridWidth: 7,
   gridHeight: 7,
-  gridSize: 500,
   squareGrid: true,
   showGrid: true,
   gridOnTop: false,
   gridStrokeWeight: 2,
   gridBlur: 0,
+  gridPadding: 10,
+  showPadding: false,
+  gridMargin: 28,
 
   // Shape parameters
   shapeType: "rectangle",
@@ -31,15 +35,15 @@ const DefaultParams = {
 
   // Color parameters
   shapeFillColor: "Blue2",
-  shapeFillColor2: "Pink2",
-  shapeFillColor3: "Green2",
+  shapeFillColor2: "Purple2",
+  shapeFillColor3: "Pink2",
   shapeAlpha: 1.0,
   showFill: true,
   backgroundColor: "White",
   gridColor: "Blue1",
-  shapeStrokeColor: "Blue1",
-  pathStrokeColor: "Blue1",
-  pathFillColor: "Blue3",
+  shapeStrokeColor: "Pink1",
+  pathStrokeColor: "Green1",
+  pathFillColor: "Yellow3",
 
   // Path parameters
   showPath: false,
@@ -142,6 +146,7 @@ const ShapeStylePresets = {
     curveAmount: 0.3,
     shapeAlpha: 0.03,
     gradientType: "conic",
+    shapeSize: 1.3,
   },
   square: {
     shapeSize: 0.9,
@@ -332,6 +337,64 @@ const ParamsManager = {
         this.params[prop] = hexValue;
       }
     });
+  },
+
+  getScaledParam(paramName) {
+    // Parameters that should scale with grid size
+    const scalingParams = [
+      "gridStrokeWeight",
+      "pathStrokeWeight",
+      "pathShapeStrokeWeight",
+      "gridBlur",
+      "shapeBlur",
+      "pathBlur",
+      "shapeCornerRadius",
+      "pathCornerRadius",
+      "positionNoise",
+      "pathShapeSpacing",
+      "gridPadding",
+    ];
+
+    // If this is a parameter that should scale, apply the scale factor
+    if (scalingParams.includes(paramName)) {
+      return this.params[paramName] * Utils.getGridScaleFactor();
+    }
+
+    // For non-scaling parameters, return the original value
+    return this.params[paramName];
+  },
+
+  getScaledParams() {
+    const scaledParams = {};
+
+    // Copy all parameters
+    for (const key in this.params) {
+      scaledParams[key] = this.params[key];
+    }
+
+    // Apply scaling to specific parameters
+    const scaleFactor = Utils.getGridScaleFactor();
+
+    // Visual styling parameters
+    scaledParams.gridStrokeWeight *= scaleFactor;
+    scaledParams.pathStrokeWeight *= scaleFactor;
+    scaledParams.pathShapeStrokeWeight *= scaleFactor;
+    scaledParams.gridBlur *= scaleFactor;
+    scaledParams.shapeBlur *= scaleFactor;
+    scaledParams.pathBlur *= scaleFactor;
+
+    // Shape details
+    scaledParams.shapeCornerRadius *= scaleFactor;
+    scaledParams.pathCornerRadius *= scaleFactor;
+
+    // Spacing and noise parameters
+    scaledParams.positionNoise *= scaleFactor;
+    scaledParams.pathShapeSpacing *= scaleFactor;
+
+    // Grid parameters
+    scaledParams.gridPadding *= scaleFactor;
+
+    return scaledParams;
   },
 };
 
@@ -768,13 +831,20 @@ const PathGenerator = {
 // Grid System module
 const GridSystem = {
   draw() {
-    if (ParamsManager.params.gridBlur > 0) {
+    const scaleFactor = window.currentScaleFactor;
+
+    // Calculate scaled padding consistently
+    const scaledGridPadding = ParamsManager.params.gridPadding * scaleFactor;
+
+    if (ParamsManager.params.gridBlur * scaleFactor > 0) {
       push();
-      drawingContext.filter = `blur(${ParamsManager.params.gridBlur}px)`;
+      drawingContext.filter = `blur(${
+        ParamsManager.params.gridBlur * scaleFactor
+      }px)`;
     }
 
     stroke(ParamsManager.params.gridColor);
-    strokeWeight(ParamsManager.params.gridStrokeWeight);
+    strokeWeight(ParamsManager.params.gridStrokeWeight * scaleFactor);
     noFill();
 
     const { cellWidth, cellHeight } = Utils.getCellDimensions();
@@ -788,23 +858,26 @@ const GridSystem = {
       line(j * cellWidth, 0, j * cellWidth, ParamsManager.params.gridSize);
     }
 
-    // Draw padding boundary if enabled
-    if (ParamsManager.params.gridPadding > 0) {
+    // Draw padding boundary if visible
+    if (
+      ParamsManager.params.gridPadding > 0 &&
+      ParamsManager.params.showPadding
+    ) {
       let paddingColor = color(ParamsManager.params.gridColor);
       paddingColor.setAlpha(100); // Semi-transparent
       stroke(paddingColor);
-      strokeWeight(ParamsManager.params.gridStrokeWeight * 0.5);
+      strokeWeight(ParamsManager.params.gridStrokeWeight * scaleFactor * 0.5);
 
-      // Draw outer padding boundary
+      // Draw outer padding boundary using scaled padding
       rect(
-        -ParamsManager.params.gridPadding,
-        -ParamsManager.params.gridPadding,
-        ParamsManager.params.gridSize + ParamsManager.params.gridPadding * 2,
-        ParamsManager.params.gridSize + ParamsManager.params.gridPadding * 2
+        -scaledGridPadding,
+        -scaledGridPadding,
+        ParamsManager.params.gridSize + scaledGridPadding * 2,
+        ParamsManager.params.gridSize + scaledGridPadding * 2
       );
     }
 
-    if (ParamsManager.params.gridBlur > 0) {
+    if (ParamsManager.params.gridBlur * scaleFactor > 0) {
       drawingContext.filter = "none";
       pop();
     }
@@ -862,7 +935,17 @@ const UIManager = {
 
   setupGridFolder() {
     this.folders.grid = this.gui.addFolder("Grid");
-
+    this.folders.grid
+      .add(ParamsManager.params, "canvasSize", 400, 2000)
+      .name("Canvas Size")
+      .onChange(() => {
+        // Resize the canvas when slider changes
+        resizeCanvas(
+          ParamsManager.params.canvasSize,
+          ParamsManager.params.canvasSize
+        );
+        redraw();
+      });
     this.folders.grid.add(ParamsManager.params, "showGrid").name("Show Grid");
     this.folders.grid
       .add(ParamsManager.params, "gridOnTop")
@@ -902,16 +985,24 @@ const UIManager = {
         }
         PathGenerator.generatePath();
       });
-
-    this.folders.grid
-      .add(ParamsManager.params, "gridSize", 100, 1000)
-      .name("Grid Size");
     this.folders.grid
       .add(ParamsManager.params, "gridStrokeWeight", 0.1, 5)
       .name("Grid Stroke Weight");
     this.folders.grid
       .add(ParamsManager.params, "gridBlur", 0, 20)
       .name("Grid Blur");
+    this.folders.grid
+      .add(ParamsManager.params, "gridMargin", 0, 300)
+      .name("Margin")
+      .onChange(() => redraw());
+    this.folders.grid
+      .add(ParamsManager.params, "gridPadding", 0, 200)
+      .name("Padding")
+      .onChange(() => redraw());
+    this.folders.grid
+      .add(ParamsManager.params, "showPadding")
+      .name("Show Padding")
+      .onChange(() => redraw());
   },
 
   setupShapeFolder() {
@@ -929,15 +1020,23 @@ const UIManager = {
       .add(ParamsManager.params, "booleanUnion")
       .name("Boolean Union")
       .onChange((value) => {
-        if (value === true && ParamsManager.params.pathShapeSpacing < 10) {
-          // Enforce minimum spacing
-          ParamsManager.params.pathShapeSpacing = 10;
+        if (value === true) {
+          // For boolean union, ensure minimum spacing as percentage of grid size
+          // Use 2% of grid size as minimum
+          const minSpacingPercentage = 0.02;
+          const minSpacing =
+            ParamsManager.params.gridSize * minSpacingPercentage;
 
-          // Update spacing controller
-          for (let controller of this.folders.path.__controllers) {
-            if (controller.property === "pathShapeSpacing") {
-              controller.updateDisplay();
-              break;
+          // Set raw parameter value (not scaled)
+          if (ParamsManager.params.pathShapeSpacing < minSpacing) {
+            ParamsManager.params.pathShapeSpacing = minSpacing;
+
+            // Update spacing controller
+            for (let controller of this.folders.path.__controllers) {
+              if (controller.property === "pathShapeSpacing") {
+                controller.updateDisplay();
+                break;
+              }
             }
           }
         }
@@ -1336,9 +1435,18 @@ const ColorPalette = {
 };
 
 function setup() {
-  createCanvas(windowWidth, windowHeight);
+  createCanvas(
+    ParamsManager.params.canvasSize,
+    ParamsManager.params.canvasSize
+  );
 
   ParamsManager.init();
+
+  // Explicitly resize the canvas after initialization to ensure correct size
+  resizeCanvas(
+    ParamsManager.params.canvasSize,
+    ParamsManager.params.canvasSize
+  );
 
   // Initialize transparent background flag
   window.useTransparentBackground = false;
@@ -1357,12 +1465,10 @@ function setup() {
 }
 
 function draw() {
-  Renderer.draw();
-}
+  // Calculate and set the current scale factor first thing
+  window.currentScaleFactor = Utils.getGridScaleFactor();
 
-function windowResized() {
-  resizeCanvas(windowWidth, windowHeight);
-  redraw();
+  Renderer.draw();
 }
 
 function keyPressed() {
@@ -1384,21 +1490,29 @@ function keyPressed() {
     return false;
   }
 
+  if (key === "d" || key === "D") {
+    window.showScalingDebug = !window.showScalingDebug;
+    return false;
+  }
+
   return true;
 }
 
 // Main Renderer module
 const Renderer = {
   draw() {
+    // Calculate current scale factor
+    window.currentScaleFactor = this.calculateScaleFactor();
+
+    // Calculate grid position in the canvas
+    const gridPosition = this.calculateGridPosition();
+
     // Handle transparent background
     if (window.useTransparentBackground) {
       clear();
     } else {
       background(ParamsManager.params.backgroundColor);
     }
-
-    // Calculate grid position in the canvas
-    const gridPosition = this.calculateGridPosition();
 
     // Translate to grid position
     push();
@@ -1424,14 +1538,64 @@ const Renderer = {
     }
 
     pop();
+
+    // Draw debug information if needed
+    if (window.showScalingDebug) {
+      Utils.drawScalingDebug();
+    }
   },
 
   calculateGridPosition() {
-    const { gridSize, gridPadding } = ParamsManager.params;
+    // Get canvas size and margin
+    const { canvasSize, gridMargin } = ParamsManager.params;
+
+    // Calculate a scaled margin based on the ratio of current canvas size to default canvas size
+    const marginScaleFactor = canvasSize / DefaultParams.canvasSize;
+    const scaledMargin = gridMargin * marginScaleFactor;
+
+    // Calculate available space for grid after scaled margin
+    const availableSpace = canvasSize - scaledMargin * 2;
+
+    // Update the grid size based on available space
+    ParamsManager.params.gridSize = availableSpace;
+
+    // Center the grid in the canvas with scaled margin
     return {
-      x: (width - gridSize) / 2,
-      y: (height - gridSize) / 2,
+      x: scaledMargin,
+      y: scaledMargin,
     };
+  },
+
+  calculateScaleFactor() {
+    // Store the current scale factor directly in a global property that all modules can access
+    window.currentScaleFactor = ParamsManager.params.gridSize / 500;
+    return window.currentScaleFactor;
+  },
+
+  // Add this before drawing anything to ensure the scale factor is current
+  updateCurrentScale() {
+    this.calculateScaleFactor();
+
+    // Update scale-dependent values directly
+    const scaleFactor = window.currentScaleFactor;
+
+    // Apply scale to critical parameters that affect visual appearance
+    this.scaledValues = {
+      gridPadding: ParamsManager.params.gridPadding * scaleFactor,
+      pathShapeStrokeWeight:
+        ParamsManager.params.pathShapeStrokeWeight * scaleFactor,
+      shapeCornerRadius: ParamsManager.params.shapeCornerRadius * scaleFactor,
+      pathShapeSpacing: ParamsManager.params.pathShapeSpacing * scaleFactor,
+      positionNoise: ParamsManager.params.positionNoise * scaleFactor,
+      pathStrokeWeight: ParamsManager.params.pathStrokeWeight * scaleFactor,
+      shapeBlur: ParamsManager.params.shapeBlur * scaleFactor,
+      pathBlur: ParamsManager.params.pathBlur * scaleFactor,
+      gridBlur: ParamsManager.params.gridBlur * scaleFactor,
+      pathCornerRadius: ParamsManager.params.pathCornerRadius * scaleFactor,
+      gridStrokeWeight: ParamsManager.params.gridStrokeWeight * scaleFactor,
+    };
+
+    return this.scaledValues;
   },
 };
 
@@ -1464,18 +1628,18 @@ const PathRenderer = {
       return;
     }
 
-    // Use Utils.withContext for cleaner context management
+    // Use Utils.withContext for cleaner context management with proper scaling
     Utils.withContext(
       drawingContext,
       {
         filter:
-          ParamsManager.params.pathBlur > 0
-            ? `blur(${ParamsManager.params.pathBlur}px)`
+          ParamsManager.getScaledParam("pathBlur") > 0
+            ? `blur(${ParamsManager.getScaledParam("pathBlur")}px)`
             : null,
         strokeStyle: ParamsManager.params.showPath
           ? ParamsManager.params.pathStrokeColor
           : null,
-        lineWidth: ParamsManager.params.pathStrokeWeight,
+        lineWidth: ParamsManager.getScaledParam("pathStrokeWeight"),
       },
       (ctx) => {
         // Set stroke cap and join
@@ -1518,7 +1682,7 @@ const PathRenderer = {
 
         // Draw path with appropriate method
         if (
-          ParamsManager.params.pathCornerRadius > 0 &&
+          ParamsManager.getScaledParam("pathCornerRadius") > 0 &&
           ParamsManager.params.pathType !== "curved"
         ) {
           this.drawPathWithRoundedCorners(cellWidth, cellHeight);
@@ -1688,7 +1852,7 @@ const PathRenderer = {
 
       // Calculate corner radius (constrained by segment lengths)
       let radius = min(
-        ParamsManager.params.pathCornerRadius,
+        ParamsManager.getScaledParam("pathCornerRadius"),
         len1 / 2,
         len2 / 2
       );
@@ -1848,9 +2012,12 @@ const PathRenderer = {
       return;
     }
 
-    // Enforce minimum spacing
-    if (ParamsManager.params.pathShapeSpacing < 10) {
-      ParamsManager.params.pathShapeSpacing = 10;
+    // Enforce minimum spacing - using scaled pathShapeSpacing for comparison
+    const minSpacing = 10 * Utils.getGridScaleFactor();
+    if (ParamsManager.getScaledParam("pathShapeSpacing") < minSpacing) {
+      ParamsManager.params.pathShapeSpacing =
+        minSpacing / Utils.getGridScaleFactor();
+
       // Update UI if available
       for (let controller of UIManager.folders.path.__controllers) {
         if (controller.property === "pathShapeSpacing") {
@@ -1939,29 +2106,26 @@ const PathRenderer = {
     accumulatedLength,
     totalLength
   ) {
-    const {
-      gridSize,
-      gridWidth,
-      gridHeight,
-      alignShapesToGrid,
-      pathType,
-      pathShapeSpacing,
-    } = ParamsManager.params;
+    // Get parameters
+    const { gridSize, gridWidth, gridHeight, alignShapesToGrid, pathType } =
+      ParamsManager.params;
 
+    // Calculate cell dimensions
     const cellWidth = gridSize / gridWidth;
     const cellHeight = gridSize / gridHeight;
 
-    // Pre-allocate shapes array with estimated size
-    const distance = dist(x1, y1, x2, y2);
-    const estimatedShapeCount = alignShapesToGrid
-      ? max(gridWidth, gridHeight) // Maximum possible intersecting cells
-      : max(1, floor(distance / pathShapeSpacing)) + 1; // Shapes along path
+    // Important: Get pathShapeSpacing directly scaled with currentScaleFactor
+    const scaledPathShapeSpacing =
+      ParamsManager.params.pathShapeSpacing * window.currentScaleFactor;
 
-    const shapes = new Array(estimatedShapeCount);
-    let shapeCount = 0;
+    // Calculate distance between points
+    const distance = dist(x1, y1, x2, y2);
+
+    // Initialize shapes array
+    let shapes = [];
 
     if (alignShapesToGrid) {
-      // Use PathGenerator for grid cells
+      // Grid-aligned shapes (unchanged)
       const gridCells = PathGenerator.getIntersectingGridCells(x1, y1, x2, y2);
 
       for (const cell of gridCells) {
@@ -1988,11 +2152,12 @@ const PathRenderer = {
           }
         );
 
-        if (shape) shapes[shapeCount++] = shape;
+        if (shape) shapes.push(shape);
       }
     } else {
-      // Handle different path types
+      // Path-based shape placement
       if (pathType === "curved") {
+        // Handle curved path
         const midX = (x1 + x2) / 2;
         const midY = (y1 + y2) / 2;
         const perpX = -(y2 - y1) * ParamsManager.params.curveAmount;
@@ -2003,7 +2168,6 @@ const PathRenderer = {
         let adjustedPerpY = perpY;
 
         if (ParamsManager.params.constrainToGrid) {
-          // Get safe control points (reusing existing function)
           const safeControlPoint = this.findSafeControlPoint(
             x1,
             y1,
@@ -2020,12 +2184,15 @@ const PathRenderer = {
           adjustedPerpY = safeControlPoint.perpY;
         }
 
-        // Calculate shape placement along curve
-        const steps = floor(distance / pathShapeSpacing) * 2;
-        const maxSteps = max(1, steps);
+        // Important: Use scaled spacing consistently
+        // Double the steps for smoother curve approximation
+        const steps = Math.max(
+          1,
+          Math.floor(distance / scaledPathShapeSpacing) * 2
+        );
 
-        for (let i = 0; i <= maxSteps; i++) {
-          const t = i / maxSteps;
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
           let x = bezierPoint(
             x1,
             midX + adjustedPerpX,
@@ -2041,17 +2208,12 @@ const PathRenderer = {
             t
           );
 
-          // Apply position noise
-          if (i > 0 && i < maxSteps) {
-            const noiseOffset = Utils.getPositionNoise(x, y, segmentIndex, i);
-            x += noiseOffset.x;
-            y += noiseOffset.y;
-          }
-
+          // Calculate progress along path for color
           const segmentLength = distance; // Approximation
           const currentLength = accumulatedLength + segmentLength * t;
           const progress = currentLength / totalLength;
 
+          // Create and add shape
           const shape = BooleanOperations.createShapePolygon(
             x,
             y,
@@ -2066,27 +2228,26 @@ const PathRenderer = {
             }
           );
 
-          if (shape) shapes[shapeCount++] = shape;
+          if (shape) shapes.push(shape);
         }
       } else {
-        // Straight or continuous path
-        const numShapes = max(1, floor(distance / pathShapeSpacing));
+        // Handle straight path
+        // Important: Use scaled spacing consistently
+        const numShapes = Math.max(
+          1,
+          Math.floor(distance / scaledPathShapeSpacing)
+        );
 
         for (let i = 0; i <= numShapes; i++) {
           const t = i / numShapes;
-          let x = lerp(x1, x2, t);
-          let y = lerp(y1, y2, t);
+          const x = lerp(x1, x2, t);
+          const y = lerp(y1, y2, t);
 
-          // Apply position noise
-          if (i > 0 && i < numShapes) {
-            const noiseOffset = Utils.getPositionNoise(x, y, segmentIndex, i);
-            x += noiseOffset.x;
-            y += noiseOffset.y;
-          }
-
+          // Calculate progress for color
           const currentLength = accumulatedLength + distance * t;
           const progress = currentLength / totalLength;
 
+          // Create and add shape
           const shape = BooleanOperations.createShapePolygon(
             x,
             y,
@@ -2101,13 +2262,11 @@ const PathRenderer = {
             }
           );
 
-          if (shape) shapes[shapeCount++] = shape;
+          if (shape) shapes.push(shape);
         }
       }
     }
 
-    // Trim the array to actual shape count
-    shapes.length = shapeCount;
     return shapes;
   },
 
@@ -2122,6 +2281,15 @@ const PathRenderer = {
     accumulatedLength,
     totalLength
   ) {
+    // Get scaled path shape spacing consistently
+    const scaledSpacing =
+      ParamsManager.params.pathShapeSpacing * window.currentScaleFactor;
+
+    // Calculate distance and number of shapes
+    let distance = dist(x1, y1, x2, y2);
+    let numShapes = floor(distance / scaledSpacing);
+    numShapes = max(1, numShapes);
+
     let cellWidth =
       ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
     let cellHeight =
@@ -2191,7 +2359,10 @@ const PathRenderer = {
       }
 
       let steps =
-        floor(dist(x1, y1, x2, y2) / ParamsManager.params.pathShapeSpacing) * 2;
+        floor(
+          dist(x1, y1, x2, y2) /
+            ParamsManager.getScaledParam("pathShapeSpacing")
+        ) * 2;
       for (let i = 0; i <= steps; i++) {
         let t = i / steps;
         let x = bezierPoint(x1, midX + perpX, midX + perpX, x2, t);
@@ -2230,7 +2401,9 @@ const PathRenderer = {
 
       // Calculate distance for number of shapes
       let distance = dist(x1, y1, x2, y2);
-      let numShapes = floor(distance / ParamsManager.params.pathShapeSpacing);
+      let numShapes = floor(
+        distance / ParamsManager.getScaledParam("pathShapeSpacing")
+      );
       numShapes = max(1, numShapes);
 
       for (let i = 0; i <= numShapes; i++) {
@@ -2263,7 +2436,9 @@ const PathRenderer = {
     } else {
       // Straight path
       let distance = dist(x1, y1, x2, y2);
-      let numShapes = floor(distance / ParamsManager.params.pathShapeSpacing);
+      let numShapes = floor(
+        distance / ParamsManager.getScaledParam("pathShapeSpacing")
+      );
       numShapes = max(1, numShapes); // Ensure at least one step
 
       for (let i = 0; i <= numShapes; i++) {
@@ -2365,7 +2540,7 @@ const ShapeRenderer = {
     );
 
     // Apply shape blur if needed
-    if (ParamsManager.params.shapeBlur > 0) {
+    if (ParamsManager.getScaledParam("shapeBlur") > 0) {
       if (ParamsManager.params.insideBlur) {
         this.drawInsideBlurredShape(
           position.x,
@@ -2376,7 +2551,7 @@ const ShapeRenderer = {
         );
       } else {
         this.drawWithContext(
-          { blur: ParamsManager.params.shapeBlur },
+          { blur: ParamsManager.getScaledParam("shapeBlur") },
           (ctx) => {
             push();
             translate(
@@ -2412,7 +2587,9 @@ const ShapeRenderer = {
         // Configure shape buffer
         if (ParamsManager.params.showPathShapeStroke) {
           shapeBuffer.stroke(ParamsManager.params.shapeStrokeColor);
-          shapeBuffer.strokeWeight(ParamsManager.params.pathShapeStrokeWeight);
+          shapeBuffer.strokeWeight(
+            ParamsManager.getScaledParam("pathShapeStrokeWeight")
+          );
         } else {
           shapeBuffer.noStroke();
         }
@@ -2448,7 +2625,7 @@ const ShapeRenderer = {
         this._drawShapeOnBuffer(shapeBuffer, 0, 0, width, height);
         this._drawShapeOnBuffer(maskBuffer, 0, 0, width, height);
       },
-      { blur: ParamsManager.params.shapeBlur }
+      { blur: ParamsManager.getScaledParam("shapeBlur") }
     );
 
     // Draw the masked image
@@ -2476,9 +2653,9 @@ const ShapeRenderer = {
 
           // Draw the shape for gradient
           if (ParamsManager.params.shapeType === "rectangle") {
-            if (ParamsManager.params.shapeCornerRadius > 0) {
+            if (ParamsManager.getScaledParam("shapeCornerRadius") > 0) {
               let radius = min(
-                ParamsManager.params.shapeCornerRadius,
+                ParamsManager.getScaledParam("shapeCornerRadius"),
                 width / 2,
                 height / 2
               );
@@ -2506,12 +2683,10 @@ const ShapeRenderer = {
 
   _drawShapeOnBuffer(buffer, x, y, width, height) {
     if (ParamsManager.params.shapeType === "rectangle") {
-      if (ParamsManager.params.shapeCornerRadius > 0) {
-        let radius = min(
-          ParamsManager.params.shapeCornerRadius,
-          width / 2,
-          height / 2
-        );
+      const scaledRadius =
+        ParamsManager.params.shapeCornerRadius * window.currentScaleFactor;
+      if (scaledRadius > 0) {
+        let radius = min(scaledRadius, width / 2, height / 2);
         buffer.rect(x, y, width, height, radius);
       } else {
         buffer.rect(x, y, width, height);
@@ -2557,10 +2732,15 @@ const ShapeRenderer = {
       }
     }
 
-    // Handle stroke
+    // Handle stroke with direct scaling - percentage of grid size for consistency
     if (ParamsManager.params.showPathShapeStroke) {
       stroke(ParamsManager.params.shapeStrokeColor);
-      strokeWeight(ParamsManager.params.pathShapeStrokeWeight);
+      // Scale stroke weight as percentage of grid size
+      const strokeWeightPercentage =
+        ParamsManager.params.pathShapeStrokeWeight / 500;
+      const scaledStrokeWeight =
+        ParamsManager.params.gridSize * strokeWeightPercentage;
+      strokeWeight(scaledStrokeWeight);
     } else {
       noStroke();
     }
@@ -2734,23 +2914,63 @@ const BooleanOperations = {
       stepIndex = 0,
     } = options;
 
+    // Scale factor based on shapeSize parameter - consistent for all shapes
     let scale = ParamsManager.params.shapeSize;
+
+    // Apply size noise consistently
     let sizeNoiseFactor = Utils.getSizeNoise(segmentIndex, stepIndex);
     scale *= sizeNoiseFactor;
 
+    // Apply scale to width and height consistently
     let scaledWidth = width * scale;
     let scaledHeight = height * scale;
-    let halfWidth = scaledWidth / 2;
-    let halfHeight = scaledHeight / 2;
 
-    // Ensure minimum size to avoid degenerate polygons
+    // Store original position before any transformations
+    const originalX = x;
+    const originalY = y;
+
+    // Apply position noise with proper scaling
+    if (ParamsManager.params.positionNoise > 0) {
+      // Use the getPositionNoiseRaw to get consistent noise pattern
+      const noiseOffset = Utils.getPositionNoiseRaw(
+        x,
+        y,
+        segmentIndex,
+        stepIndex
+      );
+
+      // Scale the noise by the positionNoise parameter and current scale factor
+      const noiseAmount =
+        ParamsManager.params.positionNoise * window.currentScaleFactor;
+      x += noiseOffset.x * noiseAmount;
+      y += noiseOffset.y * noiseAmount;
+    }
+
+    // Adjust position to boundaries with proper scaling
+    const adjustedPosition = Utils.adjustPositionToBounds(
+      x,
+      y,
+      scaledWidth,
+      scaledHeight
+    );
+
+    // Use the adjusted position
+    x = adjustedPosition.x;
+    y = adjustedPosition.y;
+
+    // Half dimensions for polygon creation
+    const halfWidth = scaledWidth / 2;
+    const halfHeight = scaledHeight / 2;
+
+    // Ensure minimum size
     if (halfWidth < 0.1 || halfHeight < 0.1) {
       return null;
     }
 
+    // Create polygon points based on shape type
     if (ParamsManager.params.shapeType === "rectangle") {
       // Create rectangle with proper winding order (counter-clockwise)
-      let points = [
+      const points = [
         [x - halfWidth, y - halfHeight],
         [x + halfWidth, y - halfHeight],
         [x + halfWidth, y + halfHeight],
@@ -2760,26 +2980,43 @@ const BooleanOperations = {
       return {
         regions: [points],
         inverted: false,
+        // Store original dimensions for debugging
+        _debug: {
+          originalX,
+          originalY,
+          x,
+          y,
+          width: scaledWidth,
+          height: scaledHeight,
+        },
       };
     } else {
-      // Create ellipse as polygon approximation with configurable resolution
-      let points = [];
-      let numPoints = ParamsManager.params.ellipseResolution;
-      numPoints = Math.max(8, numPoints); // Ensure minimum resolution
+      // Create ellipse with proper points
+      const points = [];
+      const numPoints = Math.max(8, ParamsManager.params.ellipseResolution);
 
       for (let i = 0; i < numPoints; i++) {
-        let angle = (i / numPoints) * TWO_PI;
-        let px = x + cos(angle) * halfWidth;
-        let py = y + sin(angle) * halfHeight;
+        const angle = (i / numPoints) * TWO_PI;
+        const px = x + Math.cos(angle) * halfWidth;
+        const py = y + Math.sin(angle) * halfHeight;
         points.push([px, py]);
       }
 
-      // Verify we have enough points for a valid polygon
+      // Verify valid polygon
       if (points.length < 3) return null;
 
       return {
         regions: [points],
         inverted: false,
+        // Store original dimensions for debugging
+        _debug: {
+          originalX,
+          originalY,
+          x,
+          y,
+          width: scaledWidth,
+          height: scaledHeight,
+        },
       };
     }
   },
@@ -2886,7 +3123,7 @@ const BooleanOperations = {
   drawUnifiedShape(unionResult) {
     if (!this.isValidPolygon(unionResult)) return;
 
-    // Filter out degenerate regions - do this once upfront
+    // Filter out degenerate regions
     const validRegions = unionResult.regions.filter(
       (region) => region && region.length >= 3
     );
@@ -2896,8 +3133,12 @@ const BooleanOperations = {
     // Calculate bounds once for all operations
     const bounds = this.getUnionBounds({ regions: validRegions });
 
+    // Direct scaling for blur
+    const scaledBlur =
+      ParamsManager.params.shapeBlur * window.currentScaleFactor;
+
     // Special case: inside blur
-    if (ParamsManager.params.shapeBlur > 0 && ParamsManager.params.insideBlur) {
+    if (scaledBlur > 0 && ParamsManager.params.insideBlur) {
       this.drawInsideBlurredUnion(validRegions, bounds);
       return;
     }
@@ -2906,18 +3147,18 @@ const BooleanOperations = {
     Utils.withContext(
       drawingContext,
       {
-        filter:
-          ParamsManager.params.shapeBlur > 0
-            ? `blur(${ParamsManager.params.shapeBlur}px)`
-            : null,
+        filter: scaledBlur > 0 ? `blur(${scaledBlur}px)` : null,
       },
       (ctx) => {
-        // Set appearance
+        // Set appearance with direct scaling
         if (ParamsManager.params.showPathShapeStroke) {
           ctx.strokeStyle = ParamsManager.params.shapeStrokeColor;
-          ctx.lineWidth = ParamsManager.params.pathShapeStrokeWeight;
+          ctx.lineWidth =
+            ParamsManager.params.pathShapeStrokeWeight *
+            window.currentScaleFactor;
         }
 
+        // Rest of the method remains the same
         if (!ParamsManager.params.showFill) {
           // Draw stroke-only if requested
           if (ParamsManager.params.showPathShapeStroke) {
@@ -2962,6 +3203,10 @@ const BooleanOperations = {
   },
 
   drawInsideBlurredUnion(validRegions, bounds) {
+    // Use direct scaling for blur
+    const scaledBlur =
+      ParamsManager.params.shapeBlur * window.currentScaleFactor;
+
     const result = Utils.createMaskedGraphics(
       bounds.width,
       bounds.height,
@@ -2971,10 +3216,14 @@ const BooleanOperations = {
         shapeBuffer.translate(translation.x, translation.y);
         maskBuffer.translate(translation.x, translation.y);
 
-        // Configure shape buffer
+        // Configure shape buffer with direct scaling
         if (ParamsManager.params.showPathShapeStroke) {
           shapeBuffer.stroke(ParamsManager.params.shapeStrokeColor);
-          shapeBuffer.strokeWeight(ParamsManager.params.pathShapeStrokeWeight);
+          // Apply scaling directly to stroke weight
+          shapeBuffer.strokeWeight(
+            ParamsManager.params.pathShapeStrokeWeight *
+              window.currentScaleFactor
+          );
         } else {
           shapeBuffer.noStroke();
         }
@@ -2999,23 +3248,16 @@ const BooleanOperations = {
             ParamsManager.params.shapeCornerRadius > 0 &&
             ParamsManager.params.shapeType === "rectangle"
           ) {
-            this.drawRoundedPolygon(
-              shapeBuffer,
-              region,
-              ParamsManager.params.shapeCornerRadius
-            );
-            this.drawRoundedPolygon(
-              maskBuffer,
-              region,
-              ParamsManager.params.shapeCornerRadius
-            );
+            // Use the direct scaling approach
+            this.drawRoundedPolygon(shapeBuffer, region);
+            this.drawRoundedPolygon(maskBuffer, region);
           } else {
             this._drawRegionToBuffer(shapeBuffer, region);
             this._drawRegionToBuffer(maskBuffer, region);
           }
         }
       },
-      { blur: ParamsManager.params.shapeBlur }
+      { blur: scaledBlur }
     );
 
     // Draw the masked image
@@ -3089,6 +3331,14 @@ const BooleanOperations = {
   },
 
   drawUnionWithContext(ctx, unionResult, strokeOnly = false) {
+    // Use direct scaling with window.currentScaleFactor
+    const scaledStrokeWeight =
+      ParamsManager.params.pathShapeStrokeWeight * window.currentScaleFactor;
+
+    if (ParamsManager.params.showPathShapeStroke) {
+      ctx.lineWidth = scaledStrokeWeight;
+    }
+
     for (let region of unionResult.regions) {
       if (!region || region.length < 3) continue;
 
@@ -3099,11 +3349,7 @@ const BooleanOperations = {
         ParamsManager.params.shapeCornerRadius > 0 &&
         ParamsManager.params.shapeType === "rectangle"
       ) {
-        this.drawRoundedPolygonPath(
-          ctx,
-          region,
-          ParamsManager.params.shapeCornerRadius
-        );
+        this.drawRoundedPolygonPath(ctx, region);
       } else {
         // Standard polygon drawing
         const firstPoint = region[0];
@@ -3133,8 +3379,12 @@ const BooleanOperations = {
     }
   },
 
-  drawRoundedPolygonPath(ctx, points, cornerRadius) {
+  drawRoundedPolygonPath(ctx, points) {
     if (!points || points.length < 3) return;
+
+    // Use scaled corner radius
+    const scaledCornerRadius =
+      ParamsManager.getScaledParam("shapeCornerRadius");
 
     // Calculate safe radius based on polygon edges
     let minEdgeLength = Infinity;
@@ -3151,7 +3401,7 @@ const BooleanOperations = {
     }
 
     // Limit radius to prevent overlap
-    const maxRadius = Math.min(cornerRadius, minEdgeLength * 0.4);
+    const maxRadius = Math.min(scaledCornerRadius, minEdgeLength * 0.4);
 
     // Start path with first segment
     let p0 = points[points.length - 1];
@@ -3222,8 +3472,12 @@ const BooleanOperations = {
     }
   },
 
-  drawRoundedPolygon(buffer, points, cornerRadius) {
+  drawRoundedPolygon(buffer, points) {
     if (!points || points.length < 3) return;
+
+    // Use directly scaled corner radius
+    const cornerRadius =
+      ParamsManager.params.shapeCornerRadius * window.currentScaleFactor;
 
     // Calculate safe radius based on polygon edges
     let minEdgeLength = Infinity;
@@ -3295,15 +3549,19 @@ const BooleanOperations = {
 const Utils = {
   // Adjust position to respect boundaries
   adjustPositionToBounds(x, y, width, height) {
-    const { gridSize, gridPadding } = ParamsManager.params;
+    const gridSize = ParamsManager.params.gridSize;
 
-    // Define boundaries for external padding
-    const leftBoundary = -gridPadding;
-    const rightBoundary = gridSize + gridPadding;
-    const topBoundary = -gridPadding;
-    const bottomBoundary = gridSize + gridPadding;
+    // Use window.currentScaleFactor for consistent scaling
+    const scaledGridPadding =
+      ParamsManager.params.gridPadding * window.currentScaleFactor;
 
-    // Calculate half dimensions for checking boundaries
+    // Define boundaries including properly scaled padding
+    const leftBoundary = -scaledGridPadding;
+    const rightBoundary = gridSize + scaledGridPadding;
+    const topBoundary = -scaledGridPadding;
+    const bottomBoundary = gridSize + scaledGridPadding;
+
+    // Calculate half dimensions for boundary checking
     const halfWidth = width / 2;
     const halfHeight = height / 2;
 
@@ -3365,9 +3623,9 @@ const Utils = {
     let randomX = (sin(seed * 0.123) + cos(seed * 0.456)) * 0.5;
     let randomY = (sin(seed * 0.789) + cos(seed * 0.321)) * 0.5;
 
-    // Create random angle and distance
+    // Create random angle and distance with properly scaled noise
     let angle = randomX * TWO_PI;
-    let distance = abs(randomY) * ParamsManager.params.positionNoise;
+    let distance = abs(randomY) * ParamsManager.getScaledParam("positionNoise");
 
     return {
       x: cos(angle) * distance,
@@ -3472,10 +3730,9 @@ const Utils = {
   },
 
   getCellDimensions() {
-    const cellWidth =
-      ParamsManager.params.gridSize / ParamsManager.params.gridWidth;
-    const cellHeight =
-      ParamsManager.params.gridSize / ParamsManager.params.gridHeight;
+    const gridSize = ParamsManager.params.gridSize;
+    const cellWidth = gridSize / ParamsManager.params.gridWidth;
+    const cellHeight = gridSize / ParamsManager.params.gridHeight;
     return { cellWidth, cellHeight };
   },
 
@@ -3636,5 +3893,98 @@ const Utils = {
     }
 
     return result;
+  },
+
+  getGridScaleFactor() {
+    // Base grid size used for default parameter values (500 is the default grid size)
+    const baseGridSize = 500;
+    // Current grid size (recalculated based on canvas and margin)
+    const currentGridSize = ParamsManager.params.gridSize;
+
+    // Return the ratio between current and base grid sizes
+    return currentGridSize / baseGridSize;
+  },
+
+  drawScalingDebug() {
+    if (!window.showScalingDebug) return;
+
+    const scaleFactor = window.currentScaleFactor || 1;
+    const gridSize = ParamsManager.params.gridSize;
+    const canvasSize = ParamsManager.params.canvasSize;
+
+    // Calculate padding as percentage
+    const paddingPercentage = ParamsManager.params.gridPadding / 500;
+    const scaledGridPadding = gridSize * paddingPercentage;
+
+    push();
+    // Use a semi-transparent background for text
+    fill(255, 255, 255, 200);
+    noStroke();
+    rect(5, 5, 160, 170);
+
+    // Draw text info
+    textSize(14);
+    fill(0);
+    noStroke();
+    text(`Scale: ${scaleFactor.toFixed(2)}x`, 10, 20);
+    text(`Grid: ${gridSize}px`, 10, 40);
+    text(`Canvas: ${canvasSize}px`, 10, 60);
+    text(
+      `Raw Padding: ${ParamsManager.params.gridPadding.toFixed(1)}px`,
+      10,
+      80
+    );
+    text(`Scaled Padding: ${scaledGridPadding.toFixed(1)}px`, 10, 100);
+
+    // Draw padding box in blue for reference
+    stroke(0, 0, 255, 100);
+    strokeWeight(2);
+    noFill();
+
+    // Draw a reference box at the main grid position
+    const gridPosition = Renderer.calculateGridPosition();
+    rect(
+      gridPosition.x - scaledGridPadding,
+      gridPosition.y - scaledGridPadding,
+      gridSize + scaledGridPadding * 2,
+      gridSize + scaledGridPadding * 2
+    );
+
+    // Draw grid outline in red
+    stroke(255, 0, 0, 100);
+    rect(gridPosition.x, gridPosition.y, gridSize, gridSize);
+
+    // Display shape debug info
+    text(`Shape Size: ${ParamsManager.params.shapeSize.toFixed(2)}`, 10, 120);
+    text(
+      `Boolean Union: ${ParamsManager.params.booleanUnion ? "Yes" : "No"}`,
+      10,
+      140
+    );
+    text(
+      `Shape Spacing: ${ParamsManager.params.pathShapeSpacing.toFixed(1)}px`,
+      10,
+      160
+    );
+
+    pop();
+  },
+
+  getPositionNoiseRaw(x, y, segmentIndex, stepIndex) {
+    // Create a unique seed for each shape position
+    let seed = segmentIndex * 1000 + stepIndex;
+
+    // Use the seed to create deterministic but seemingly random values
+    let randomX = (sin(seed * 0.123) + cos(seed * 0.456)) * 0.5;
+    let randomY = (sin(seed * 0.789) + cos(seed * 0.321)) * 0.5;
+
+    // Create random angle and distance, but don't scale yet
+    let angle = randomX * TWO_PI;
+    let distance = abs(randomY);
+
+    return {
+      x: cos(angle) * distance,
+      y: sin(angle) * distance,
+    };
   },
 };
