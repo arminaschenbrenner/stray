@@ -1365,6 +1365,28 @@ function windowResized() {
   redraw();
 }
 
+function keyPressed() {
+  // Regenerate path with 'r' key
+  if (key === "r" || key === "R") {
+    ParamsManager.params.regeneratePath();
+    return false;
+  }
+
+  // Save image with 's' key
+  if (key === "s" || key === "S") {
+    ParamsManager.params.exportImage();
+    return false;
+  }
+
+  // Export package versions with 'e' key
+  if (key === "e" || key === "E") {
+    ParamsManager.params.exportPackageVersions();
+    return false;
+  }
+
+  return true;
+}
+
 // Main Renderer module
 const Renderer = {
   draw() {
