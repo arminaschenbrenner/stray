@@ -28,7 +28,7 @@ const DefaultParams = {
   shapeType: "rectangle",
   shapeCornerRadius: 0,
   showPathShapeStroke: false,
-  pathShapeStrokeWeight: 1,
+  shapeStrokeWeight: 1,
   shapeBlur: 0,
   insideBlur: false,
   shapeSize: 1.0,
@@ -95,7 +95,7 @@ const ShapeStylePresets = {
     booleanUnion: true,
     shapeCornerRadius: 20,
     showPathShapeStroke: true,
-    pathShapeStrokeWeight: 30,
+    shapeStrokeWeight: 30,
     shapeBlur: 15,
     insideBlur: true,
     shapeSize: 1.1,
@@ -110,7 +110,7 @@ const ShapeStylePresets = {
     positionNoise: 10,
     sizeNoise: 0.5,
     showPathShapeStroke: true,
-    pathShapeStrokeWeight: 5,
+    shapeStrokeWeight: 5,
     selectedCells: 8,
     shapeSize: 0.5,
     shapeType: "rectangle",
@@ -128,7 +128,7 @@ const ShapeStylePresets = {
     positionNoise: 50,
     sizeNoise: 0.5,
     showPathShapeStroke: true,
-    pathShapeStrokeWeight: 20,
+    shapeStrokeWeight: 20,
     shapeBlur: 10,
     insideBlur: true,
     shapeSize: 0.8,
@@ -139,6 +139,7 @@ const ShapeStylePresets = {
     sizeNoise: 0.5,
     showPathShapeStroke: true,
     shapeSize: 0.2,
+    shapeStrokeWeight: 0.5,
     pathType: "curved",
     curveAmount: 0.1,
     pathShapeSpacing: 2,
@@ -286,7 +287,7 @@ const ParamsManager = {
         saveCanvas(
           exportCanvas,
           dateString +
-            `_Atico_Stray_${this.params.exportSizePixels}px_${this.params.exportDPI}dpi`,
+            `_Atico_Stray_${this.params.exportSizePixels}px_${this.params.exportSizeCM}cm_${this.params.exportDPI}dpi`,
           "png"
         );
 
@@ -404,7 +405,7 @@ const ParamsManager = {
           saveCanvas(
             exportCanvas,
             dateString +
-              `_Atico_Stray_${this.params.exportSizePixels}px_${this.params.exportDPI}dpi_${suffix}`,
+              `_Atico_Stray_${this.params.exportSizePixels}px_${this.params.exportSizeCM}cm_${this.params.exportDPI}dpi_${suffix}`,
             "png"
           );
 
@@ -551,7 +552,7 @@ const ParamsManager = {
     const scalingParams = [
       "gridStrokeWeight",
       "pathStrokeWeight",
-      "pathShapeStrokeWeight",
+      "shapeStrokeWeight",
       "gridBlur",
       "shapeBlur",
       "pathBlur",
@@ -585,7 +586,7 @@ const ParamsManager = {
     // Visual styling parameters
     scaledParams.gridStrokeWeight *= scaleFactor;
     scaledParams.pathStrokeWeight *= scaleFactor;
-    scaledParams.pathShapeStrokeWeight *= scaleFactor;
+    scaledParams.shapeStrokeWeight *= scaleFactor;
     scaledParams.gridBlur *= scaleFactor;
     scaledParams.shapeBlur *= scaleFactor;
     scaledParams.pathBlur *= scaleFactor;
@@ -1379,7 +1380,7 @@ const UIManager = {
       .add(ParamsManager.params, "showPathShapeStroke")
       .name("Show Shape Stroke");
     this.folders.shape
-      .add(ParamsManager.params, "pathShapeStrokeWeight", 0.1, 50)
+      .add(ParamsManager.params, "shapeStrokeWeight", 0.1, 50)
       .name("Shape Stroke Weight");
     this.folders.shape
       .add(ParamsManager.params, "shapeBlur", 0, 50)
@@ -1924,8 +1925,7 @@ const Renderer = {
     // Apply scale to critical parameters that affect visual appearance
     this.scaledValues = {
       gridPadding: ParamsManager.params.gridPadding * scaleFactor,
-      pathShapeStrokeWeight:
-        ParamsManager.params.pathShapeStrokeWeight * scaleFactor,
+      shapeStrokeWeight: ParamsManager.params.shapeStrokeWeight * scaleFactor,
       shapeCornerRadius: ParamsManager.params.shapeCornerRadius * scaleFactor,
       pathShapeSpacing: ParamsManager.params.pathShapeSpacing * scaleFactor,
       positionNoise: ParamsManager.params.positionNoise * scaleFactor,
@@ -3196,7 +3196,7 @@ const PathRenderer = {
     if (ParamsManager.params.showPathShapeStroke) {
       targetCanvas.stroke(ParamsManager.params.shapeStrokeColor);
       targetCanvas.strokeWeight(
-        ParamsManager.params.pathShapeStrokeWeight * window.currentScaleFactor
+        ParamsManager.params.shapeStrokeWeight * window.currentScaleFactor
       );
     } else {
       targetCanvas.noStroke();
@@ -3267,7 +3267,7 @@ const PathRenderer = {
   drawUnionWithContextToCanvas(targetCanvas, unionResult, strokeOnly = false) {
     // Scale stroke weight directly
     const scaledStrokeWeight =
-      ParamsManager.params.pathShapeStrokeWeight * window.currentScaleFactor;
+      ParamsManager.params.shapeStrokeWeight * window.currentScaleFactor;
 
     if (ParamsManager.params.showPathShapeStroke) {
       targetCanvas.strokeWeight(scaledStrokeWeight);
@@ -3416,7 +3416,7 @@ const PathRenderer = {
     if (ParamsManager.params.showPathShapeStroke) {
       tempCanvas.stroke(ParamsManager.params.shapeStrokeColor);
       tempCanvas.strokeWeight(
-        ParamsManager.params.pathShapeStrokeWeight * window.currentScaleFactor
+        ParamsManager.params.shapeStrokeWeight * window.currentScaleFactor
       );
     } else {
       tempCanvas.noStroke();
@@ -3822,7 +3822,7 @@ const PathRenderer = {
     if (ParamsManager.params.showPathShapeStroke) {
       targetCanvas.stroke(ParamsManager.params.shapeStrokeColor);
       targetCanvas.strokeWeight(
-        ParamsManager.params.pathShapeStrokeWeight * window.currentScaleFactor
+        ParamsManager.params.shapeStrokeWeight * window.currentScaleFactor
       );
     } else {
       targetCanvas.noStroke();
@@ -3994,7 +3994,7 @@ const PathRenderer = {
     if (ParamsManager.params.showPathShapeStroke) {
       tempCanvas.stroke(ParamsManager.params.shapeStrokeColor);
       tempCanvas.strokeWeight(
-        ParamsManager.params.pathShapeStrokeWeight * window.currentScaleFactor
+        ParamsManager.params.shapeStrokeWeight * window.currentScaleFactor
       );
     } else {
       tempCanvas.noStroke();
@@ -4262,7 +4262,7 @@ const ShapeRenderer = {
         if (ParamsManager.params.showPathShapeStroke) {
           shapeBuffer.stroke(ParamsManager.params.shapeStrokeColor);
           shapeBuffer.strokeWeight(
-            ParamsManager.getScaledParam("pathShapeStrokeWeight")
+            ParamsManager.getScaledParam("shapeStrokeWeight")
           );
         } else {
           shapeBuffer.noStroke();
@@ -4411,7 +4411,7 @@ const ShapeRenderer = {
       stroke(ParamsManager.params.shapeStrokeColor);
       // Scale stroke weight as percentage of grid size
       const strokeWeightPercentage =
-        ParamsManager.params.pathShapeStrokeWeight / 500;
+        ParamsManager.params.shapeStrokeWeight / 500;
       const scaledStrokeWeight =
         ParamsManager.params.gridSize * strokeWeightPercentage;
       strokeWeight(scaledStrokeWeight);
@@ -4828,8 +4828,7 @@ const BooleanOperations = {
         if (ParamsManager.params.showPathShapeStroke) {
           ctx.strokeStyle = ParamsManager.params.shapeStrokeColor;
           ctx.lineWidth =
-            ParamsManager.params.pathShapeStrokeWeight *
-            window.currentScaleFactor;
+            ParamsManager.params.shapeStrokeWeight * window.currentScaleFactor;
         }
 
         // Rest of the method remains the same
@@ -4895,8 +4894,7 @@ const BooleanOperations = {
           shapeBuffer.stroke(ParamsManager.params.shapeStrokeColor);
           // Apply scaling directly to stroke weight
           shapeBuffer.strokeWeight(
-            ParamsManager.params.pathShapeStrokeWeight *
-              window.currentScaleFactor
+            ParamsManager.params.shapeStrokeWeight * window.currentScaleFactor
           );
         } else {
           shapeBuffer.noStroke();
@@ -5007,7 +5005,7 @@ const BooleanOperations = {
   drawUnionWithContext(ctx, unionResult, strokeOnly = false) {
     // Use direct scaling with window.currentScaleFactor
     const scaledStrokeWeight =
-      ParamsManager.params.pathShapeStrokeWeight * window.currentScaleFactor;
+      ParamsManager.params.shapeStrokeWeight * window.currentScaleFactor;
 
     if (ParamsManager.params.showPathShapeStroke) {
       ctx.lineWidth = scaledStrokeWeight;
@@ -5410,7 +5408,6 @@ const Utils = {
     return { cellWidth, cellHeight };
   },
 
-  // Add to Utils object
   createMaskedGraphics(width, height, drawFn, options = {}) {
     const { blur = 0, offset = { x: 0, y: 0 } } = options;
 
@@ -5550,7 +5547,6 @@ const Utils = {
     return colorNameOrHex; // Return as is if no palette
   },
 
-  // Helper method to ensure we're working with hex values, not color names
   ensureHexColors(colorObject) {
     const result = {};
 
