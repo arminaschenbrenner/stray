@@ -11,7 +11,7 @@ const DefaultParams = {
   exportSizePixels: 1654,
 
   // Grid parameters
-  canvasSize: 570,
+  canvasSize: 800,
   gridSize: 500,
   gridWidth: 7,
   gridHeight: 7,
@@ -33,7 +33,7 @@ const DefaultParams = {
   insideBlur: false,
   shapeSize: 1.0,
   booleanUnion: false,
-  ellipseResolution: 32,
+  ellipseResolution: 64,
   positionNoise: 0,
   sizeNoise: 0,
   showShape: true,
@@ -174,71 +174,8 @@ const ParamsManager = {
       PathGenerator.generatePath();
     };
 
-    this.params.exportImage = () => {
-      let now = new Date();
-      let dateString =
-        now.getFullYear() +
-        String(now.getMonth() + 1).padStart(2, "0") +
-        String(now.getDate()).padStart(2, "0") +
-        "_" +
-        String(now.getHours()).padStart(2, "0") +
-        String(now.getMinutes()).padStart(2, "0") +
-        String(now.getSeconds()).padStart(2, "0");
-
-      saveCanvas(dateString + "_Atico_Stray", "png");
-    };
-
-    this.params.exportPackageVersions = () => {
-      // Save date string for consistent filenames
-      let now = new Date();
-      let dateString =
-        now.getFullYear() +
-        String(now.getMonth() + 1).padStart(2, "0") +
-        String(now.getDate()).padStart(2, "0") +
-        "_" +
-        String(now.getHours()).padStart(2, "0") +
-        String(now.getMinutes()).padStart(2, "0") +
-        String(now.getSeconds()).padStart(2, "0");
-
-      // Save current state
-      let originalShowGrid = this.params.showGrid;
-      let originalBgColor = this.params.backgroundColor;
-      let originalUseTransparent = window.useTransparentBackground || false;
-
-      // Version 1: With grid (if not already showing)
-      if (!originalShowGrid) {
-        this.params.showGrid = true;
-        redraw();
-      }
-      saveCanvas(dateString + "_Atico_Stray_grid_bg", "png");
-
-      // Version 2: Without grid
-      this.params.showGrid = false;
-      redraw();
-      saveCanvas(dateString + "_Atico_Stray_nogrid_bg", "png");
-
-      // Add transparent mode flag
-      window.useTransparentBackground = true;
-
-      // Version 3: With grid + transparent background
-      this.params.showGrid = true;
-      redraw();
-      saveCanvas(dateString + "_Atico_Stray_grid_nobg", "png");
-
-      // Version 4: Without grid + transparent background
-      this.params.showGrid = false;
-      redraw();
-      saveCanvas(dateString + "_Atico_Stray_nobg", "png");
-
-      // Restore original state
-      this.params.showGrid = originalShowGrid;
-      this.params.backgroundColor = originalBgColor;
-      window.useTransparentBackground = originalUseTransparent;
-      redraw();
-    };
-
     this.params.exportCustomSize = () => {
-      // Create a timestamp for the filename
+      // Create timestamp for filename
       let now = new Date();
       let dateString =
         now.getFullYear() +
@@ -250,20 +187,26 @@ const ParamsManager = {
         String(now.getSeconds()).padStart(2, "0");
 
       // Store original parameters
-      const originalGridSize = this.params.gridSize;
-      const originalMargin = this.params.gridMargin;
-      const originalCanvasSize = this.params.canvasSize;
-      const originalScaleFactor = window.currentScaleFactor;
+      const originalParams = {
+        gridSize: this.params.gridSize,
+        gridMargin: this.params.gridMargin,
+        canvasSize: this.params.canvasSize,
+        scaleFactor: window.currentScaleFactor,
+      };
+
+      // Get current display density
+      const displayDensityFactor = pixelDensity();
+      console.log(`Display density factor: ${displayDensityFactor}`);
 
       try {
-        // Create a new off-screen canvas at the desired export size
+        // Create an off-screen canvas at the desired export size
         const exportCanvas = createGraphics(
           this.params.exportSizePixels,
           this.params.exportSizePixels
         );
 
-        // Calculate exact export scale factor
-        const exportScale = this.params.exportSizePixels / originalCanvasSize;
+        // CRITICAL: Set pixel density to 1 for the export canvas
+        exportCanvas.pixelDensity(1);
 
         // Apply background
         if (window.useTransparentBackground) {
@@ -272,33 +215,54 @@ const ParamsManager = {
           exportCanvas.background(this.params.backgroundColor);
         }
 
-        // Temporarily modify parameters for export
-        this.params.canvasSize = this.params.exportSizePixels;
+        // IMPORTANT: Calculate the precise viewport ratio between margin and canvas
+        // This ratio should be preserved exactly in the export
+        const viewportMarginRatio =
+          originalParams.gridMargin / originalParams.canvasSize;
 
-        // Scale grid size and margin by the export scale factor
-        this.params.gridSize = Math.round(originalGridSize * exportScale);
-        this.params.gridMargin = Math.round(originalMargin * exportScale);
-
-        // Calculate grid position for export
-        const gridPosition = {
-          x: this.params.gridMargin,
-          y: this.params.gridMargin,
-        };
-
-        // Set the correct scale factor for export
-        window.currentScaleFactor = this.params.gridSize / 500;
-
-        console.log(
-          `Export: scale=${exportScale}, scaleFactor=${window.currentScaleFactor}, gridSize=${this.params.gridSize}`
+        // Apply the same ratio to get the export margin in pixels
+        const exportMargin = Math.round(
+          this.params.exportSizePixels * viewportMarginRatio
         );
 
-        // Draw to the export canvas with correct positioning
+        // Calculate export grid size (export canvas size minus margins on both sides)
+        const exportGridSize = this.params.exportSizePixels - exportMargin * 2;
+
+        // Set export parameters
+        const exportParams = {
+          canvasSize: this.params.exportSizePixels,
+          gridMargin: exportMargin,
+          gridSize: exportGridSize,
+        };
+
+        // Store current parameters
+        const currentParams = {
+          canvasSize: this.params.canvasSize,
+          gridMargin: this.params.gridMargin,
+          gridSize: this.params.gridSize,
+        };
+
+        // Temporarily update parameters for drawing
+        this.params.canvasSize = exportParams.canvasSize;
+        this.params.gridMargin = exportParams.gridMargin;
+        this.params.gridSize = exportParams.gridSize;
+
+        // Update scale factor for proper scaling during export
+        window.currentScaleFactor = exportGridSize / 500;
+
+        console.log(
+          `Export: size=${this.params.exportSizePixels}px, density=${displayDensityFactor}, ` +
+            `viewport margin ratio=${viewportMarginRatio}, ` +
+            `export margin=${exportMargin}, grid=${exportGridSize}, ` +
+            `scaleFactor=${window.currentScaleFactor}`
+        );
+
+        // Draw to export canvas with correct grid position
         exportCanvas.push();
-        exportCanvas.translate(gridPosition.x, gridPosition.y);
+        exportCanvas.translate(exportMargin, exportMargin);
 
         // Draw grid if enabled (behind content)
         if (this.params.showGrid && !this.params.gridOnTop) {
-          // Use the drawToCanvas method which properly handles the exportCanvas context
           GridSystem.drawToCanvas(exportCanvas);
         }
 
@@ -308,7 +272,6 @@ const ParamsManager = {
           this.params.showPath ||
           this.params.fillPath
         ) {
-          // We need a complete implementation of drawPathToCanvas to ensure all features work
           PathRenderer.drawPathToCanvas(exportCanvas);
         }
 
@@ -336,11 +299,140 @@ const ParamsManager = {
             `${this.params.exportSizeCM}cm (${this.params.exportSizePixels}px)`
         );
       } finally {
-        // Always restore original parameters, even if export fails
-        this.params.gridSize = originalGridSize;
-        this.params.gridMargin = originalMargin;
-        this.params.canvasSize = originalCanvasSize;
-        window.currentScaleFactor = originalScaleFactor;
+        // CRITICAL: Restore ALL original parameters exactly as they were
+        this.params.gridSize = originalParams.gridSize;
+        this.params.gridMargin = originalParams.gridMargin;
+        this.params.canvasSize = originalParams.canvasSize;
+        window.currentScaleFactor = originalParams.scaleFactor;
+
+        // Force redraw to restore the view
+        redraw();
+      }
+    };
+
+    this.params.exportCustomSizePackage = () => {
+      // Save date string for consistent filenames
+      let now = new Date();
+      let dateString =
+        now.getFullYear() +
+        String(now.getMonth() + 1).padStart(2, "0") +
+        String(now.getDate()).padStart(2, "0") +
+        "_" +
+        String(now.getHours()).padStart(2, "0") +
+        String(now.getMinutes()).padStart(2, "0") +
+        String(now.getSeconds()).padStart(2, "0");
+
+      // Save current state
+      let originalShowGrid = this.params.showGrid;
+      let originalBgColor = this.params.backgroundColor;
+      let originalUseTransparent = window.useTransparentBackground || false;
+
+      // Store original parameters for export size
+      const originalParams = {
+        gridSize: this.params.gridSize,
+        gridMargin: this.params.gridMargin,
+        canvasSize: this.params.canvasSize,
+        scaleFactor: window.currentScaleFactor,
+      };
+
+      // Get current display density
+      const displayDensityFactor = pixelDensity();
+
+      try {
+        // Common export parameters calculation
+        const viewportMarginRatio =
+          originalParams.gridMargin / originalParams.canvasSize;
+        const exportMargin = Math.round(
+          this.params.exportSizePixels * viewportMarginRatio
+        );
+        const exportGridSize = this.params.exportSizePixels - exportMargin * 2;
+
+        // Function to perform each export variation
+        const performExport = (showGrid, useTransparentBg, suffix) => {
+          // Create a new export canvas for this variation
+          const exportCanvas = createGraphics(
+            this.params.exportSizePixels,
+            this.params.exportSizePixels
+          );
+
+          // Set pixel density to 1
+          exportCanvas.pixelDensity(1);
+
+          // Set parameters for this export
+          this.params.showGrid = showGrid;
+          window.useTransparentBackground = useTransparentBg;
+
+          // Update parameters for export size
+          this.params.canvasSize = this.params.exportSizePixels;
+          this.params.gridMargin = exportMargin;
+          this.params.gridSize = exportGridSize;
+          window.currentScaleFactor = exportGridSize / 500;
+
+          // Apply background
+          if (useTransparentBg) {
+            exportCanvas.clear();
+          } else {
+            exportCanvas.background(this.params.backgroundColor);
+          }
+
+          // Draw to export canvas
+          exportCanvas.push();
+          exportCanvas.translate(exportMargin, exportMargin);
+
+          // Draw grid if enabled (behind content)
+          if (showGrid && !this.params.gridOnTop) {
+            GridSystem.drawToCanvas(exportCanvas);
+          }
+
+          // Draw path content
+          if (
+            this.params.showShape ||
+            this.params.showPath ||
+            this.params.fillPath
+          ) {
+            PathRenderer.drawPathToCanvas(exportCanvas);
+          }
+
+          // Draw grid on top if needed
+          if (showGrid && this.params.gridOnTop) {
+            GridSystem.drawToCanvas(exportCanvas);
+          }
+
+          exportCanvas.pop();
+
+          // Save with suffix to indicate variation
+          saveCanvas(
+            exportCanvas,
+            dateString +
+              `_Atico_Stray_${this.params.exportSizePixels}px_${this.params.exportDPI}dpi_${suffix}`,
+            "png"
+          );
+
+          // Clean up
+          exportCanvas.remove();
+        };
+
+        // Export all four variations
+        performExport(true, false, "grid_bg"); // Version 1: With grid + background
+        performExport(false, false, "nogrid_bg"); // Version 2: No grid + background
+        performExport(true, true, "grid_nobg"); // Version 3: With grid + transparent
+        performExport(false, true, "nogrid_nobg"); // Version 4: No grid + transparent
+
+        console.log(
+          `Exported package at ${this.params.exportDPI} DPI, ` +
+            `${this.params.exportSizeCM}cm (${this.params.exportSizePixels}px)`
+        );
+      } finally {
+        // Restore all original parameters
+        this.params.gridSize = originalParams.gridSize;
+        this.params.gridMargin = originalParams.gridMargin;
+        this.params.canvasSize = originalParams.canvasSize;
+        window.currentScaleFactor = originalParams.scaleFactor;
+
+        // Restore original display settings
+        this.params.showGrid = originalShowGrid;
+        this.params.backgroundColor = originalBgColor;
+        window.useTransparentBackground = originalUseTransparent;
 
         // Force redraw to restore the view
         redraw();
@@ -1095,6 +1187,11 @@ const UIManager = {
       this.folders[key].open();
     }
 
+    // Keep Grid, Shape and Path folders closed
+    this.folders.grid.close();
+    this.folders.shape.close();
+    this.folders.path.close();
+
     // Convert color names to hex values for all color parameters after UI setup
     ParamsManager.convertNamedColorsToHex();
   },
@@ -1106,10 +1203,10 @@ const UIManager = {
       .add(ParamsManager.params, "regeneratePath")
       .name("Regenerate (R)");
     this.folders.general
-      .add(ParamsManager.params, "exportImage")
+      .add(ParamsManager.params, "exportCustomSize")
       .name("Save (S)");
     this.folders.general
-      .add(ParamsManager.params, "exportPackageVersions")
+      .add(ParamsManager.params, "exportCustomSizePackage")
       .name("Save (package) (E)");
 
     this.folders.general
@@ -1148,26 +1245,10 @@ const UIManager = {
         // Update cm size when pixel size changes
         this.updateExportSizeCM();
       });
-
-    // Export button
-    this.folders.export
-      .add(ParamsManager.params, "exportCustomSize")
-      .name("Export Custom Size");
   },
 
   setupGridFolder() {
     this.folders.grid = this.gui.addFolder("Grid");
-    this.folders.grid
-      .add(ParamsManager.params, "canvasSize", 400, 2000)
-      .name("Canvas Size")
-      .onChange(() => {
-        // Resize the canvas when slider changes
-        resizeCanvas(
-          ParamsManager.params.canvasSize,
-          ParamsManager.params.canvasSize
-        );
-        redraw();
-      });
     this.folders.grid.add(ParamsManager.params, "showGrid").name("Show Grid");
     this.folders.grid
       .add(ParamsManager.params, "gridOnTop")
@@ -1283,7 +1364,7 @@ const UIManager = {
         }
       });
     this.folders.shape
-      .add(ParamsManager.params, "ellipseResolution", 8, 32, 1)
+      .add(ParamsManager.params, "ellipseResolution", 8, 64, 1)
       .name("Ellipse Resolution");
     this.folders.shape
       .add(ParamsManager.params, "positionNoise", 0, 50)
@@ -1741,13 +1822,13 @@ function keyPressed() {
 
   // Save image with 's' key
   if (key === "s" || key === "S") {
-    ParamsManager.params.exportImage();
+    ParamsManager.params.exportCustomSize();
     return false;
   }
 
   // Export package versions with 'e' key
   if (key === "e" || key === "E") {
-    ParamsManager.params.exportPackageVersions();
+    ParamsManager.params.exportCustomSizePackage();
     return false;
   }
 
