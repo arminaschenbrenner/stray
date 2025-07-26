@@ -6,7 +6,7 @@ let cellSizes = {};
 // Global constants for default parameters
 const DefaultParams = {
   // Export parameters
-  exportDPI: 300,
+  exportDPI: 600,
   exportSizeCM: 14,
   exportSizePixels: 1654,
 
@@ -39,16 +39,16 @@ const DefaultParams = {
   showShape: true,
 
   // Color parameters
-  shapeFillColor: "Blue2",
-  shapeFillColor2: "Purple2",
-  shapeFillColor3: "Pink2",
+  shapeFillColor: "blue medium",
+  shapeFillColor2: "purple medium",
+  shapeFillColor3: "pink medium",
   shapeAlpha: 1.0,
   showFill: true,
-  backgroundColor: "White",
-  gridColor: "Blue1",
-  shapeStrokeColor: "Pink1",
-  pathStrokeColor: "Green1",
-  pathFillColor: "Yellow3",
+  backgroundColor: "standard white",
+  gridColor: "blue dark",
+  shapeStrokeColor: "pink dark",
+  pathStrokeColor: "green dark",
+  pathFillColor: "yellow light",
 
   // Path parameters
   showPath: false,
@@ -120,7 +120,7 @@ const ShapeStylePresets = {
   pipe: {
     shapeType: "ellipse",
     selectedCells: 8,
-    gradientType: "diagonal",
+    gradientType: "vertical",
   },
   cloud: {
     shapeType: "ellipse",
@@ -152,6 +152,7 @@ const ShapeStylePresets = {
     curveAmount: 0.3,
     shapeAlpha: 0.03,
     gradientType: "conic",
+    gradientColors: "3",
     shapeSize: 1.3,
   },
   square: {
@@ -461,6 +462,13 @@ const ParamsManager = {
     // Store current color values before resetting
     const colorSettings = {};
 
+    // Store export settings to preserve
+    const exportSettings = {
+      exportDPI: this.params.exportDPI,
+      exportSizeCM: this.params.exportSizeCM,
+      exportSizePixels: this.params.exportSizePixels,
+    };
+
     // List of all color-related properties to preserve
     const colorProps = [
       "backgroundColor",
@@ -487,6 +495,11 @@ const ParamsManager = {
         this.params[key] = DefaultParams[key];
       }
     }
+
+    // Restore export settings
+    this.params.exportDPI = exportSettings.exportDPI;
+    this.params.exportSizeCM = exportSettings.exportSizeCM;
+    this.params.exportSizePixels = exportSettings.exportSizePixels;
 
     // Apply the selected style preset
     if (ShapeStylePresets[style]) {
@@ -1702,30 +1715,31 @@ const UIManager = {
 const ColorPalette = {
   // Main palette colors
   mainColors: [
-    { name: "Yellow1", hex: "#a69f19" },
-    { name: "Yellow2", hex: "#f4ef9b" },
-    { name: "Yellow3", hex: "#fbf9db" },
-    { name: "Green1", hex: "#284325" },
-    { name: "Green2", hex: "#6fa369" },
-    { name: "Green3", hex: "#d9e8d9" },
-    { name: "Pink1", hex: "#731a4d" },
-    { name: "Pink2", hex: "#dd7cb1" },
-    { name: "Pink3", hex: "#f4d1e5" },
-    { name: "Purple1", hex: "#53396a" },
-    { name: "Purple2", hex: "#ab8fc3" },
-    { name: "Purple3", hex: "#e1d8e9" },
-    { name: "Orange1", hex: "#6c150f" },
-    { name: "Orange2", hex: "#e74310" },
-    { name: "Orange3", hex: "#F9B99F" },
-    { name: "Blue1", hex: "#1c3966" },
-    { name: "Blue2", hex: "#195da9" },
-    { name: "Blue3", hex: "#97bde6" },
+    { name: "yellow dark", hex: "#a69f19" },
+    { name: "yellow medium", hex: "#f4ef9b" },
+    { name: "yellow light", hex: "#fbf9db" },
+    { name: "green dark", hex: "#284325" },
+    { name: "green medium", hex: "#6fa369" },
+    { name: "green light", hex: "#d9e8d9" },
+    { name: "pink dark", hex: "#731a4d" },
+    { name: "pink medium", hex: "#dd7cb1" },
+    { name: "pink light", hex: "#f4d1e5" },
+    { name: "purple dark", hex: "#53396a" },
+    { name: "purple medium", hex: "#ab8fc3" },
+    { name: "purple light", hex: "#e1d8e9" },
+    { name: "orange dark", hex: "#6c150f" },
+    { name: "orange medium", hex: "#e74310" },
+    { name: "orange light", hex: "#F9B99F" },
+    { name: "blue dark", hex: "#1c3966" },
+    { name: "blue medium", hex: "#195da9" },
+    { name: "blue light", hex: "#97bde6" },
+    { name: "premium type grey", hex: "#b1bdc7" },
   ],
 
   // Background colors
   backgroundColors: [
-    { name: "White", hex: "#fbfcf5" },
-    { name: "Grey", hex: "#292e34" },
+    { name: "standard white", hex: "#fbfcf5" },
+    { name: "premium grey", hex: "#292e34" },
   ],
 
   // Get array of all color names for dropdown
