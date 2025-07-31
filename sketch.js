@@ -39,12 +39,12 @@ const DefaultParams = {
   showShape: true,
 
   // Color parameters
-  shapeFillColor: "blue medium",
-  shapeFillColor2: "purple medium",
-  shapeFillColor3: "pink medium",
+  shapeFillColor: "blue",
+  shapeFillColor2: "purple",
+  shapeFillColor3: "pink",
   shapeAlpha: 1.0,
   showFill: true,
-  backgroundColor: "standard white",
+  backgroundColor: "offwhite",
   gridColor: "blue dark",
   shapeStrokeColor: "pink dark",
   pathStrokeColor: "green dark",
@@ -1531,7 +1531,7 @@ const UIManager = {
       .add(
         ParamsManager.colorNames, // Use colorNames object for UI display
         "backgroundColor",
-        ColorPalette.getBackgroundColorNames()
+        ColorPalette.getMainColorNames()
       )
       .name("Background Color")
       .onChange((value) => {
@@ -1716,30 +1716,26 @@ const ColorPalette = {
   // Main palette colors
   mainColors: [
     { name: "yellow dark", hex: "#a69f19" },
-    { name: "yellow medium", hex: "#f4ef9b" },
+    { name: "yellow", hex: "#f4ef9b" },
     { name: "yellow light", hex: "#fbf9db" },
     { name: "green dark", hex: "#284325" },
-    { name: "green medium", hex: "#6fa369" },
+    { name: "green", hex: "#6fa369" },
     { name: "green light", hex: "#d9e8d9" },
     { name: "pink dark", hex: "#731a4d" },
-    { name: "pink medium", hex: "#dd7cb1" },
+    { name: "pink", hex: "#dd7cb1" },
     { name: "pink light", hex: "#f4d1e5" },
     { name: "purple dark", hex: "#53396a" },
-    { name: "purple medium", hex: "#ab8fc3" },
+    { name: "purple", hex: "#ab8fc3" },
     { name: "purple light", hex: "#e1d8e9" },
     { name: "orange dark", hex: "#6c150f" },
-    { name: "orange medium", hex: "#e74310" },
+    { name: "orange", hex: "#e74310" },
     { name: "orange light", hex: "#F9B99F" },
     { name: "blue dark", hex: "#1c3966" },
-    { name: "blue medium", hex: "#195da9" },
+    { name: "blue", hex: "#195da9" },
     { name: "blue light", hex: "#97bde6" },
-    { name: "premium type grey", hex: "#b1bdc7" },
-  ],
-
-  // Background colors
-  backgroundColors: [
-    { name: "standard white", hex: "#fbfcf5" },
-    { name: "premium grey", hex: "#292e34" },
+    { name: "offwhite", hex: "#fbfcf5" },
+    { name: "grey", hex: "#292e34" },
+    { name: "grey light", hex: "#b1bdc7" },
   ],
 
   // Get array of all color names for dropdown
@@ -1747,23 +1743,11 @@ const ColorPalette = {
     return this.mainColors.map((color) => color.name);
   },
 
-  // Get array of all background color names for dropdown
-  getBackgroundColorNames() {
-    return [
-      ...this.getMainColorNames(),
-      ...this.backgroundColors.map((color) => color.name),
-    ];
-  },
-
   // Get hex code by color name
   getHexByName(name) {
     // Search in main colors first
     const mainColor = this.mainColors.find((color) => color.name === name);
     if (mainColor) return mainColor.hex;
-
-    // Then search in background colors
-    const bgColor = this.backgroundColors.find((color) => color.name === name);
-    if (bgColor) return bgColor.hex;
 
     // If not found, return the input (might be a hex value)
     return name;
@@ -1779,12 +1763,6 @@ const ColorPalette = {
       (color) => color.hex.toLowerCase() === normalizedHex
     );
     if (mainColor) return mainColor.name;
-
-    // Then search in background colors
-    const bgColor = this.backgroundColors.find(
-      (color) => color.hex.toLowerCase() === normalizedHex
-    );
-    if (bgColor) return bgColor.name;
 
     // If not found, return the hex
     return hex;
