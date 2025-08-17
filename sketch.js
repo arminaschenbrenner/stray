@@ -116,6 +116,7 @@ const ShapeStylePresets = {
     shapeType: "rectangle",
     showShape: true,
     showPath: false,
+    gradientType: "diagonal",
   },
   pipe: {
     shapeType: "ellipse",
@@ -3256,133 +3257,147 @@ const PathRenderer = {
     }
   },
 
-  drawUnionWithContextToCanvas(targetCanvas, unionResult, strokeOnly = false) {
-    // Scale stroke weight directly
-    const scaledStrokeWeight =
-      ParamsManager.params.shapeStrokeWeight * window.currentScaleFactor;
+  drawUnifiedShapeToCanvas(targetCanvas, unionResult) {
+    if (!BooleanOperations.isValidPolygon(unionResult)) return;
 
-    if (ParamsManager.params.showPathShapeStroke) {
-      targetCanvas.strokeWeight(scaledStrokeWeight);
+    // Filter out degenerate regions
+    const validRegions = unionResult.regions.filter(
+      (region) => region && region.length >= 3
+    );
+
+    if (validRegions.length === 0) return;
+
+    // Calculate bounds once for all operations
+    const bounds = BooleanOperations.getUnionBounds({ regions: validRegions });
+
+    // Direct scaling for blur
+    const scaledBlur =
+      ParamsManager.params.shapeBlur * window.currentScaleFactor;
+
+    // Special case: inside blur
+    if (scaledBlur > 0 && ParamsManager.params.insideBlur) {
+      this.drawInsideBlurredUnionToCanvas(targetCanvas, validRegions, bounds);
+      return;
     }
 
-    // Create a function to draw a polygon with rounded corners
-    const drawRoundedPolygon = (canvas, points) => {
-      const cornerRadius = ParamsManager.getScaledParam("shapeCornerRadius");
+    // Apply blur if needed
+    if (scaledBlur > 0) {
+      targetCanvas.push();
+      targetCanvas.drawingContext.filter = `blur(${scaledBlur}px)`;
+    }
 
-      // Skip if no rounding or very few points
-      if (cornerRadius <= 0 || points.length < 3) {
-        canvas.beginShape();
-        for (const pt of points) {
-          if (Array.isArray(pt) && pt.length >= 2) {
-            canvas.vertex(pt[0], pt[1]);
-          }
+    // Set appearance with direct scaling
+    if (ParamsManager.params.showPathShapeStroke) {
+      targetCanvas.stroke(ParamsManager.params.shapeStrokeColor);
+      targetCanvas.strokeWeight(
+        ParamsManager.params.shapeStrokeWeight * window.currentScaleFactor
+      );
+    } else {
+      targetCanvas.noStroke();
+    }
+
+    if (!ParamsManager.params.showFill) {
+      // Draw stroke-only if requested
+      if (ParamsManager.params.showPathShapeStroke) {
+        this.drawUnionWithContextToCanvas(
+          targetCanvas,
+          { regions: validRegions },
+          true
+        );
+      }
+    } else {
+      // Handle fill types
+      if (ParamsManager.params.gradientType === "none") {
+        // Solid fill
+        const c = color(ParamsManager.params.shapeFillColor);
+        c.setAlpha(ParamsManager.params.shapeAlpha * 255);
+        targetCanvas.fill(c);
+        this.drawUnionWithContextToCanvas(
+          targetCanvas,
+          { regions: validRegions },
+          false
+        );
+      } else if (ParamsManager.params.gradientType === "length") {
+        // Length-based gradient (use middle color for union)
+        let fillColor;
+        if (ParamsManager.params.gradientColors === "2") {
+          fillColor = lerpColor(
+            color(ParamsManager.params.shapeFillColor),
+            color(ParamsManager.params.shapeFillColor2),
+            0.5
+          );
+        } else {
+          fillColor = color(ParamsManager.params.shapeFillColor2);
         }
-        canvas.endShape(CLOSE);
-        return;
-      }
-
-      // Calculate min edge length to prevent excessive rounding
-      let minEdgeLength = Infinity;
-      for (let i = 0; i < points.length; i++) {
-        const p1 = points[i];
-        const p2 = points[(i + 1) % points.length];
-
-        if (!Array.isArray(p1) || !Array.isArray(p2)) continue;
-
-        const dx = p2[0] - p1[0];
-        const dy = p2[1] - p1[1];
-        const edgeLength = Math.sqrt(dx * dx + dy * dy);
-        minEdgeLength = Math.min(minEdgeLength, edgeLength);
-      }
-
-      // Constrain radius to 40% of the shortest edge
-      const safeRadius = Math.min(cornerRadius, minEdgeLength * 0.4);
-      if (safeRadius <= 0) {
-        // Fall back to standard polygon if radius is too small
-        canvas.beginShape();
-        for (const pt of points) {
-          if (Array.isArray(pt) && pt.length >= 2) {
-            canvas.vertex(pt[0], pt[1]);
-          }
-        }
-        canvas.endShape(CLOSE);
-        return;
-      }
-
-      // Start the shape
-      canvas.beginShape();
-
-      // Process each corner with rounded edges
-      for (let i = 0; i < points.length; i++) {
-        const curr = points[i];
-        const prev = points[(i - 1 + points.length) % points.length];
-        const next = points[(i + 1) % points.length];
-
-        if (
-          !Array.isArray(prev) ||
-          !Array.isArray(curr) ||
-          !Array.isArray(next)
-        )
-          continue;
-
-        // Calculate vectors
-        const v1 = [curr[0] - prev[0], curr[1] - prev[1]];
-        const v2 = [next[0] - curr[0], next[1] - curr[1]];
-
-        // Calculate lengths
-        const len1 = Math.sqrt(v1[0] * v1[0] + v1[1] * v1[1]);
-        const len2 = Math.sqrt(v2[0] * v2[0] + v2[1] * v2[1]);
-
-        if (len1 === 0 || len2 === 0) {
-          canvas.vertex(curr[0], curr[1]);
-          continue;
-        }
-
-        // Normalize vectors
-        const n1 = [v1[0] / len1, v1[1] / len1];
-        const n2 = [v2[0] / len2, v2[1] / len2];
-
-        // Calculate points before and after corner
-        const beforeCorner = {
-          x: curr[0] - n1[0] * safeRadius,
-          y: curr[1] - n1[1] * safeRadius,
-        };
-
-        const afterCorner = {
-          x: curr[0] + n2[0] * safeRadius,
-          y: curr[1] + n2[1] * safeRadius,
-        };
-
-        // Draw line to point before corner
-        canvas.vertex(beforeCorner.x, beforeCorner.y);
-
-        // Draw quadratic curve for the corner
-        canvas.quadraticVertex(curr[0], curr[1], afterCorner.x, afterCorner.y);
-      }
-
-      canvas.endShape(CLOSE);
-    };
-
-    // Process each region
-    for (let region of unionResult.regions) {
-      if (!region || region.length < 3) continue;
-
-      if (
-        ParamsManager.params.shapeCornerRadius > 0 &&
-        ParamsManager.params.shapeType === "rectangle"
-      ) {
-        // Draw with rounded corners using our custom function
-        drawRoundedPolygon(targetCanvas, region);
+        fillColor.setAlpha(ParamsManager.params.shapeAlpha * 255);
+        targetCanvas.fill(fillColor);
+        this.drawUnionWithContextToCanvas(
+          targetCanvas,
+          { regions: validRegions },
+          false
+        );
       } else {
-        // Standard polygon drawing
-        targetCanvas.beginShape();
-        for (const point of region) {
-          if (Array.isArray(point) && point.length >= 2) {
-            targetCanvas.vertex(point[0], point[1]);
+        // Complex gradients - use p5.js drawing methods instead of direct context manipulation
+        targetCanvas.push();
+
+        // Create gradient using the drawing context
+        const gradient = BooleanOperations.createGradientForBounds(
+          targetCanvas.drawingContext,
+          bounds
+        );
+
+        // Use drawingContext directly for gradient fill
+        targetCanvas.drawingContext.save();
+        targetCanvas.drawingContext.fillStyle = gradient;
+
+        // Draw each region using the context
+        for (let region of validRegions) {
+          if (!region || region.length < 3) continue;
+
+          targetCanvas.drawingContext.beginPath();
+
+          // Handle rounded corners if needed
+          if (
+            ParamsManager.params.shapeCornerRadius > 0 &&
+            ParamsManager.params.shapeType === "rectangle"
+          ) {
+            BooleanOperations.drawRoundedPolygonPath(
+              targetCanvas.drawingContext,
+              region
+            );
+          } else {
+            // Standard polygon drawing
+            const firstPoint = region[0];
+            if (Array.isArray(firstPoint) && firstPoint.length >= 2) {
+              targetCanvas.drawingContext.moveTo(firstPoint[0], firstPoint[1]);
+
+              for (let i = 1; i < region.length; i++) {
+                const point = region[i];
+                if (Array.isArray(point) && point.length >= 2) {
+                  targetCanvas.drawingContext.lineTo(point[0], point[1]);
+                }
+              }
+            }
+          }
+
+          targetCanvas.drawingContext.closePath();
+          targetCanvas.drawingContext.fill();
+
+          // Add stroke if needed
+          if (ParamsManager.params.showPathShapeStroke) {
+            targetCanvas.drawingContext.stroke();
           }
         }
-        targetCanvas.endShape(CLOSE);
+
+        targetCanvas.drawingContext.restore();
+        targetCanvas.pop();
       }
+    }
+
+    // Reset filter if blur was applied
+    if (scaledBlur > 0) {
+      targetCanvas.drawingContext.filter = "none";
+      targetCanvas.pop();
     }
   },
 
@@ -3799,6 +3814,7 @@ const PathRenderer = {
         return;
       }
 
+      // Apply external blur
       targetCanvas.push();
       targetCanvas.drawingContext.filter = `blur(${scaledBlur}px)`;
     }
@@ -4206,7 +4222,8 @@ const ShapeRenderer = {
     );
 
     // Apply shape blur if needed
-    if (ParamsManager.getScaledParam("shapeBlur") > 0) {
+    const scaledBlur = ParamsManager.getScaledParam("shapeBlur");
+    if (scaledBlur > 0) {
       if (ParamsManager.params.insideBlur) {
         this.drawInsideBlurredShape(
           position.x,
@@ -4216,8 +4233,10 @@ const ShapeRenderer = {
           progress
         );
       } else {
-        this.drawWithContext(
-          { blur: ParamsManager.getScaledParam("shapeBlur") },
+        // Apply external blur using context filter
+        Utils.withContext(
+          drawingContext,
+          { filter: `blur(${scaledBlur}px)` },
           (ctx) => {
             push();
             translate(
