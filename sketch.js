@@ -73,7 +73,8 @@ const DefaultParams = {
   gradientType: "none",
   gradientColors: "2",
 
-  // Shape style
+  // Collection and style parameters
+  collection: "custom",
   shapeStyle: "custom",
 };
 
@@ -488,6 +489,7 @@ const ParamsManager = {
       "regeneratePath",
       "exportCustomSize",
       "exportCustomSizePackage",
+      "collection",
     ];
 
     if (excludedParams.includes(paramName)) return false;
@@ -505,12 +507,30 @@ const ParamsManager = {
       this.shouldAutoSwitchToCustom(paramName) &&
       this.currentStyle !== "custom"
     ) {
-      // Only change the current style tracking
+      // Change current style and collection tracking
       this.currentStyle = "custom";
+      this.params.collection = "custom";
 
-      // Update ONLY the style dropdown in the UI
+      // Update style and collection dropdowns in the UI
       UIManager.updateStyleController();
+      UIManager.updateCollectionController();
     }
+  },
+
+  onStyleChange(newStyle) {
+    // If we're switching FROM a standard collection style TO a different style, set collection to custom
+    if (this.params.collection.startsWith("standard ")) {
+      const designatedStyle = ColorRules.getCollectionStyle(
+        this.params.collection
+      );
+      if (designatedStyle && newStyle !== designatedStyle) {
+        this.params.collection = "custom";
+        UIManager.updateCollectionController();
+      }
+    }
+
+    // Apply the new style
+    this.applyStyle(newStyle);
   },
 
   applyStyle(style) {
@@ -523,6 +543,9 @@ const ParamsManager = {
       exportSizeCM: this.params.exportSizeCM,
       exportSizePixels: this.params.exportSizePixels,
     };
+
+    // Store collection setting to preserve
+    const currentCollection = this.params.collection;
 
     // Store color settings to preserve
     const colorSettings = {};
@@ -558,6 +581,9 @@ const ParamsManager = {
       this.params.exportSizeCM = exportSettings.exportSizeCM;
       this.params.exportSizePixels = exportSettings.exportSizePixels;
 
+      // Restore collection setting
+      this.params.collection = currentCollection;
+
       // Apply the selected style preset
       if (ShapeStylePresets[style]) {
         // For any color property in the style preset, convert from hex to name if needed
@@ -575,22 +601,51 @@ const ParamsManager = {
         Object.assign(this.params, styledParams);
       }
 
-      // Restore color settings if not specifically defined in the style preset
-      colorProps.forEach((prop) => {
-        if (
-          ShapeStylePresets[style] &&
-          !ShapeStylePresets[style].hasOwnProperty(prop)
-        ) {
-          this.params[prop] = colorSettings[prop];
+      // Apply color rules based on collection and style AFTER applying style preset
+      if (ColorRules.hasRules(this.params.collection, style)) {
+        const currentColors = {};
+        colorProps.forEach((prop) => {
+          currentColors[prop] = this.params[prop];
+        });
+
+        const ruledColors = ColorPalette.applyColorRules(
+          this.params.collection,
+          style,
+          currentColors
+        );
+
+        // Update parameters with ruled colors
+        Object.assign(this.params, ruledColors);
+
+        // IMPORTANT: Update the colorNames object for UI display
+        if (ParamsManager.colorNames) {
+          colorProps.forEach((prop) => {
+            if (ruledColors[prop]) {
+              ParamsManager.colorNames[prop] = ruledColors[prop];
+            }
+          });
         }
-      });
+      } else {
+        // Restore color settings if not specifically defined in the style preset or rules
+        colorProps.forEach((prop) => {
+          if (
+            ShapeStylePresets[style] &&
+            !ShapeStylePresets[style].hasOwnProperty(prop)
+          ) {
+            this.params[prop] = colorSettings[prop];
+          }
+        });
+      }
     }
     // If switching to "custom", don't change any parameter values - just update the style tracking
 
     // Update current style
     this.currentStyle = style;
 
-    // Update UI
+    // Update the shapeStyle parameter to match
+    this.params.shapeStyle = style;
+
+    // Update UI - this will update all controllers including color dropdowns
     UIManager.updateAllControllers();
 
     // After UI update, convert color names to hex for drawing
@@ -1292,17 +1347,60 @@ const UIManager = {
       .add(ParamsManager.params, "exportCustomSizePackage")
       .name("Save (package) (E)");
 
+    // Add collection dropdown with onChange handler
+    this.folders.general
+      .add(ParamsManager.params, "collection", [
+        "custom",
+        "standard Kenya",
+        "standard Ethiopia",
+        "standard Central America",
+        "standard Colombia",
+        "standard Other",
+        "special",
+        "premium",
+      ])
+      .name("Collection")
+      .onChange((value) => {
+        // If a standard collection is selected, automatically set its designated style
+        if (ColorRules.isStandardCollection(value)) {
+          const designatedStyle = ColorRules.getCollectionStyle(value);
+          if (designatedStyle) {
+            // Update the parameter FIRST
+            ParamsManager.params.shapeStyle = designatedStyle;
+
+            // Apply the style (this will trigger color rules and update all controllers)
+            ParamsManager.applyStyle(designatedStyle);
+
+            // AFTER applyStyle, explicitly update the style controller to ensure it shows the correct value
+            if (this.styleController) {
+              this.styleController.setValue(designatedStyle);
+            }
+          }
+        }
+      });
+
     // Store reference to style controller
     this.styleController = this.folders.general
       .add(ParamsManager.params, "shapeStyle", Object.keys(ShapeStylePresets))
       .name("Shape Style")
-      .onChange((value) => ParamsManager.applyStyle(value));
+      .onChange((value) => ParamsManager.onStyleChange(value));
   },
 
   // Method to update style controller when auto-switching to custom
   updateStyleController() {
     if (this.styleController) {
       this.styleController.setValue("custom");
+    }
+  },
+
+  // Method to update collection controller when auto-switching to custom
+  updateCollectionController() {
+    // Find and update the collection controller
+    for (let controller of this.folders.general.__controllers) {
+      if (controller.property === "collection") {
+        controller.setValue("custom");
+        break;
+      }
     }
   },
 
@@ -1673,7 +1771,7 @@ const UIManager = {
       .add(
         ParamsManager.colorNames,
         "backgroundColor",
-        ColorPalette.getMainColorNames()
+        ColorPalette.getAllColorNames()
       )
       .name("Background Color")
       .onChange((value) => {
@@ -1687,7 +1785,7 @@ const UIManager = {
       .add(
         ParamsManager.colorNames,
         "gridColor",
-        ColorPalette.getMainColorNames()
+        ColorPalette.getAllColorNames()
       )
       .name("Grid Color")
       .onChange((value) => {
@@ -1701,7 +1799,7 @@ const UIManager = {
       .add(
         ParamsManager.colorNames,
         "shapeStrokeColor",
-        ColorPalette.getMainColorNames()
+        ColorPalette.getAllColorNames()
       )
       .name("Shape Stroke Color")
       .onChange((value) => {
@@ -1716,7 +1814,7 @@ const UIManager = {
       .add(
         ParamsManager.colorNames,
         "pathStrokeColor",
-        ColorPalette.getMainColorNames()
+        ColorPalette.getAllColorNames()
       )
       .name("Path Stroke Color")
       .onChange((value) => {
@@ -1730,7 +1828,7 @@ const UIManager = {
       .add(
         ParamsManager.colorNames,
         "pathFillColor",
-        ColorPalette.getMainColorNames()
+        ColorPalette.getAllColorNames()
       )
       .name("Path Fill Color")
       .onChange((value) => {
@@ -1771,7 +1869,7 @@ const UIManager = {
       .add(
         ParamsManager.colorNames,
         "shapeFillColor",
-        ColorPalette.getMainColorNames()
+        ColorPalette.getAllColorNames()
       )
       .name("Shape Fill Color 1")
       .onChange((value) => {
@@ -1784,7 +1882,7 @@ const UIManager = {
       .add(
         ParamsManager.colorNames,
         "shapeFillColor2",
-        ColorPalette.getMainColorNames()
+        ColorPalette.getAllColorNames()
       )
       .name("Shape Fill Color 2")
       .onChange((value) => {
@@ -1797,7 +1895,7 @@ const UIManager = {
       .add(
         ParamsManager.colorNames,
         "shapeFillColor3",
-        ColorPalette.getMainColorNames()
+        ColorPalette.getAllColorNames()
       )
       .name("Shape Fill Color 3")
       .onChange((value) => {
@@ -1858,34 +1956,51 @@ const UIManager = {
 
 // Color Palette module
 const ColorPalette = {
-  // Main palette colors
+  // Main palette colors organized by color families
   mainColors: [
-    { name: "yellow dark", hex: "#a69f19" },
-    { name: "yellow", hex: "#f4ef9b" },
-    { name: "yellow light", hex: "#fbf9db" },
-    { name: "green dark", hex: "#284325" },
-    { name: "green", hex: "#6fa369" },
-    { name: "green light", hex: "#d9e8d9" },
-    { name: "pink dark", hex: "#731a4d" },
-    { name: "pink", hex: "#dd7cb1" },
-    { name: "pink light", hex: "#f4d1e5" },
-    { name: "purple dark", hex: "#53396a" },
-    { name: "purple", hex: "#ab8fc3" },
-    { name: "purple light", hex: "#e1d8e9" },
-    { name: "orange dark", hex: "#6c150f" },
-    { name: "orange", hex: "#e74310" },
-    { name: "orange light", hex: "#F9B99F" },
-    { name: "blue dark", hex: "#1c3966" },
-    { name: "blue", hex: "#195da9" },
-    { name: "blue light", hex: "#97bde6" },
+    { name: "yellow dark", hex: "#a69f19", family: "yellow", shade: "dark" },
+    { name: "yellow", hex: "#f4ef9b", family: "yellow", shade: "medium" },
+    { name: "yellow light", hex: "#fbf9db", family: "yellow", shade: "light" },
+    { name: "green dark", hex: "#284325", family: "green", shade: "dark" },
+    { name: "green", hex: "#6fa369", family: "green", shade: "medium" },
+    { name: "green light", hex: "#d9e8d9", family: "green", shade: "light" },
+    { name: "pink dark", hex: "#731a4d", family: "pink", shade: "dark" },
+    { name: "pink", hex: "#dd7cb1", family: "pink", shade: "medium" },
+    { name: "pink light", hex: "#f4d1e5", family: "pink", shade: "light" },
+    { name: "purple dark", hex: "#53396a", family: "purple", shade: "dark" },
+    { name: "purple", hex: "#ab8fc3", family: "purple", shade: "medium" },
+    { name: "purple light", hex: "#e1d8e9", family: "purple", shade: "light" },
+    { name: "orange dark", hex: "#6c150f", family: "orange", shade: "dark" },
+    { name: "orange", hex: "#e74310", family: "orange", shade: "medium" },
+    { name: "orange light", hex: "#F9B99F", family: "orange", shade: "light" },
+    { name: "blue dark", hex: "#1c3966", family: "blue", shade: "dark" },
+    { name: "blue", hex: "#195da9", family: "blue", shade: "medium" },
+    { name: "blue light", hex: "#97bde6", family: "blue", shade: "light" },
+  ],
+
+  // Secondary/neutral colors
+  neutralColors: [
     { name: "offwhite", hex: "#fbfcf5" },
     { name: "grey", hex: "#292e34" },
     { name: "grey light", hex: "#b1bdc7" },
   ],
 
-  // Get array of all color names for dropdown
+  // Color families in order for neighbor selection
+  colorFamilies: ["yellow", "green", "blue", "purple", "pink", "orange"],
+
+  // Get array of all main color names for dropdown
   getMainColorNames() {
     return this.mainColors.map((color) => color.name);
+  },
+
+  // Get array of all neutral color names
+  getNeutralColorNames() {
+    return this.neutralColors.map((color) => color.name);
+  },
+
+  // Get array of all color names (main + neutral)
+  getAllColorNames() {
+    return [...this.getMainColorNames(), ...this.getNeutralColorNames()];
   },
 
   // Get hex code by color name
@@ -1893,6 +2008,12 @@ const ColorPalette = {
     // Search in main colors first
     const mainColor = this.mainColors.find((color) => color.name === name);
     if (mainColor) return mainColor.hex;
+
+    // Search in neutral colors
+    const neutralColor = this.neutralColors.find(
+      (color) => color.name === name
+    );
+    if (neutralColor) return neutralColor.hex;
 
     // If not found, return the input (might be a hex value)
     return name;
@@ -1909,8 +2030,189 @@ const ColorPalette = {
     );
     if (mainColor) return mainColor.name;
 
+    // Search in neutral colors
+    const neutralColor = this.neutralColors.find(
+      (color) => color.hex.toLowerCase() === normalizedHex
+    );
+    if (neutralColor) return neutralColor.name;
+
     // If not found, return the hex
     return hex;
+  },
+
+  // Get color object by name
+  getColorByName(name) {
+    const mainColor = this.mainColors.find((color) => color.name === name);
+    if (mainColor) return mainColor;
+
+    const neutralColor = this.neutralColors.find(
+      (color) => color.name === name
+    );
+    if (neutralColor) return neutralColor;
+
+    return null;
+  },
+
+  // Get different shade of the same color family
+  getColorByShade(baseName, targetShade) {
+    const baseColor = this.getColorByName(baseName);
+    if (!baseColor || !baseColor.family) return baseName;
+
+    const targetColor = this.mainColors.find(
+      (color) =>
+        color.family === baseColor.family && color.shade === targetShade
+    );
+
+    return targetColor ? targetColor.name : baseName;
+  },
+
+  // Get neighboring color family
+  getNeighborColor(baseName, direction, shade = "medium") {
+    const baseColor = this.getColorByName(baseName);
+    if (!baseColor || !baseColor.family) return baseName;
+
+    const currentIndex = this.colorFamilies.indexOf(baseColor.family);
+    if (currentIndex === -1) return baseName;
+
+    // Calculate neighbor index with wrapping
+    let neighborIndex;
+    if (direction === "next") {
+      neighborIndex = (currentIndex + 1) % this.colorFamilies.length;
+    } else if (direction === "previous") {
+      neighborIndex =
+        (currentIndex - 1 + this.colorFamilies.length) %
+        this.colorFamilies.length;
+    } else {
+      return baseName;
+    }
+
+    const neighborFamily = this.colorFamilies[neighborIndex];
+
+    // Find color in neighbor family with specified shade
+    const neighborColor = this.mainColors.find(
+      (color) => color.family === neighborFamily && color.shade === shade
+    );
+
+    return neighborColor ? neighborColor.name : baseName;
+  },
+
+  // Apply color rules based on collection and style
+  applyColorRules(collection, style, baseColors) {
+    // Get the rules for this collection/style combination
+    const rules = ColorRules.getRules(collection, style);
+    if (!rules) return baseColors;
+
+    const result = { ...baseColors };
+
+    // Apply each rule
+    for (const [colorParam, rule] of Object.entries(rules)) {
+      if (rule.type === "direct") {
+        result[colorParam] = rule.value;
+      } else if (rule.type === "shade") {
+        result[colorParam] = this.getColorByShade(
+          result[rule.baseColor],
+          rule.shade
+        );
+      } else if (rule.type === "neighbor") {
+        result[colorParam] = this.getNeighborColor(
+          result[rule.baseColor],
+          rule.direction,
+          rule.shade || "medium"
+        );
+      }
+    }
+
+    return result;
+  },
+};
+
+// Color Rules module
+const ColorRules = {
+  // Rule definitions for different collection/style combinations
+  rules: {
+    "standard Kenya": {
+      bubbles: {
+        backgroundColor: { type: "direct", value: "offwhite" },
+        gridColor: { type: "direct", value: "blue" },
+        shapeStrokeColor: { type: "direct", value: "purple dark" },
+        shapeFillColor: { type: "direct", value: "purple" },
+        shapeFillColor2: { type: "direct", value: "purple" },
+        shapeFillColor3: { type: "direct", value: "purple dark" },
+      },
+    },
+    "standard Other": {
+      cloud: {
+        backgroundColor: { type: "direct", value: "offwhite" },
+        gridColor: { type: "direct", value: "orange" },
+        shapeStrokeColor: { type: "direct", value: "blue" },
+        shapeFillColor: { type: "direct", value: "offwhite" },
+      },
+    },
+    "standard Ethiopia": {
+      pipe: {
+        backgroundColor: { type: "direct", value: "offwhite" },
+        gridColor: { type: "direct", value: "green" },
+        shapeFillColor: { type: "direct", value: "orange" },
+        shapeFillColor2: { type: "direct", value: "yellow" },
+      },
+    },
+    "standard Central America": {
+      smoke: {
+        backgroundColor: { type: "direct", value: "offwhite" },
+        gridColor: { type: "direct", value: "purple" },
+        shapeFillColor: { type: "direct", value: "yellow" },
+        shapeFillColor2: { type: "direct", value: "green dark" },
+        shapeFillColor3: { type: "direct", value: "green dark" },
+      },
+    },
+    "standard Colombia": {
+      stairs: {
+        backgroundColor: { type: "direct", value: "offwhite" },
+        gridColor: { type: "direct", value: "pink dark" },
+        shapeStrokeColor: { type: "direct", value: "yellow dark" },
+        shapeFillColor: { type: "direct", value: "yellow light" },
+      },
+    },
+    // Add more collection/style combinations here
+  },
+
+  // Get rules for a specific collection and style
+  getRules(collection, style) {
+    if (this.rules[collection] && this.rules[collection][style]) {
+      return this.rules[collection][style];
+    }
+    return null;
+  },
+
+  // Check if rules exist for a collection/style combination
+  hasRules(collection, style) {
+    return this.rules[collection] && this.rules[collection][style];
+  },
+
+  // Add or update rules for a collection/style combination
+  setRules(collection, style, rules) {
+    if (!this.rules[collection]) {
+      this.rules[collection] = {};
+    }
+    this.rules[collection][style] = rules;
+  },
+
+  // Get the designated style for a collection (for standard collections)
+  getCollectionStyle(collection) {
+    const collectionStyleMap = {
+      "standard Kenya": "bubbles",
+      "standard Other": "cloud",
+      "standard Ethiopia": "pipe",
+      "standard Central America": "smoke",
+      "standard Colombia": "stairs",
+      // Add other standard collections here as they're defined
+    };
+    return collectionStyleMap[collection] || null;
+  },
+
+  // Check if a collection is a standard collection
+  isStandardCollection(collection) {
+    return collection.startsWith("standard ");
   },
 };
 
