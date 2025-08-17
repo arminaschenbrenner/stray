@@ -162,6 +162,16 @@ const ShapeStylePresets = {
     pathDirection: "90",
     gradientType: "horizontal",
   },
+  flowers: {
+    shapeType: "ellipse",
+    positionNoise: 30,
+    sizeNoise: 1,
+    pathDirection: "45",
+    selectedCells: 7,
+    pathShapeSpacing: 20,
+    gradientType: "radial",
+    gradientColors: "3",
+  },
 };
 
 // Parameter Manager module
