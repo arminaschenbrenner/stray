@@ -74,12 +74,12 @@ const DefaultParams = {
   gradientColors: "2",
 
   // Shape style
-  shapeStyle: "default",
+  shapeStyle: "custom",
 };
 
 // Style presets
 const ShapeStylePresets = {
-  default: {}, // Default values come from DefaultParams
+  custom: {}, // Custom values come from current parameters
   paint: {
     showShape: false,
     showPath: true,
@@ -177,10 +177,15 @@ const ShapeStylePresets = {
 // Parameter Manager module
 const ParamsManager = {
   params: {},
+  currentStyle: "custom", // Track current style
+  isUpdatingFromStyle: false, // Flag to prevent auto-switching during style application
 
   init() {
     // Clone the default parameters
     this.params = JSON.parse(JSON.stringify(DefaultParams));
+
+    // Set initial style
+    this.currentStyle = "custom";
 
     // Add function properties
     this.params.regeneratePath = () => {
@@ -469,18 +474,58 @@ const ParamsManager = {
     PathGenerator.generatePath();
   },
 
-  applyStyle(style) {
-    // Store current color values before resetting
-    const colorSettings = {};
+  // Check if a parameter should trigger auto-switch to custom
+  shouldAutoSwitchToCustom(paramName) {
+    // Don't auto-switch if we're currently updating from a style preset
+    if (this.isUpdatingFromStyle) return false;
 
-    // Store export settings to preserve
+    // Don't auto-switch for export parameters or function properties
+    const excludedParams = [
+      "exportDPI",
+      "exportSizeCM",
+      "exportSizePixels",
+      "canvasSize",
+      "regeneratePath",
+      "exportCustomSize",
+      "exportCustomSizePackage",
+    ];
+
+    if (excludedParams.includes(paramName)) return false;
+
+    // Auto-switch for grid, shape, path, and color parameters
+    return true;
+  },
+
+  // Method to handle parameter changes
+  onParameterChange(paramName, newValue) {
+    // The parameter value has already been updated by the UI controller
+    // We just need to check if we should switch to custom style
+
+    if (
+      this.shouldAutoSwitchToCustom(paramName) &&
+      this.currentStyle !== "custom"
+    ) {
+      // Only change the current style tracking
+      this.currentStyle = "custom";
+
+      // Update ONLY the style dropdown in the UI
+      UIManager.updateStyleController();
+    }
+  },
+
+  applyStyle(style) {
+    // Set flag to prevent auto-switching during style application
+    this.isUpdatingFromStyle = true;
+
+    // Store export settings to preserve (always preserve these)
     const exportSettings = {
       exportDPI: this.params.exportDPI,
       exportSizeCM: this.params.exportSizeCM,
       exportSizePixels: this.params.exportSizePixels,
     };
 
-    // List of all color-related properties to preserve
+    // Store color settings to preserve
+    const colorSettings = {};
     const colorProps = [
       "backgroundColor",
       "gridColor",
@@ -492,51 +537,58 @@ const ParamsManager = {
       "shapeFillColor3",
     ];
 
-    // Save current color values
     colorProps.forEach((prop) => {
       colorSettings[prop] = this.params[prop];
     });
 
-    // First reset to defaults
-    for (const key in DefaultParams) {
-      if (
-        this.params.hasOwnProperty(key) &&
-        typeof DefaultParams[key] !== "function"
-      ) {
-        this.params[key] = DefaultParams[key];
+    // Only reset to defaults if we're NOT switching to "custom"
+    if (style !== "custom") {
+      // Reset all parameters to defaults first
+      for (const key in DefaultParams) {
+        if (
+          this.params.hasOwnProperty(key) &&
+          typeof DefaultParams[key] !== "function"
+        ) {
+          this.params[key] = DefaultParams[key];
+        }
       }
-    }
 
-    // Restore export settings
-    this.params.exportDPI = exportSettings.exportDPI;
-    this.params.exportSizeCM = exportSettings.exportSizeCM;
-    this.params.exportSizePixels = exportSettings.exportSizePixels;
+      // Restore export settings (always preserve these)
+      this.params.exportDPI = exportSettings.exportDPI;
+      this.params.exportSizeCM = exportSettings.exportSizeCM;
+      this.params.exportSizePixels = exportSettings.exportSizePixels;
 
-    // Apply the selected style preset
-    if (ShapeStylePresets[style]) {
-      // For any color property in the style preset, convert from hex to name if needed
-      const styledParams = { ...ShapeStylePresets[style] };
+      // Apply the selected style preset
+      if (ShapeStylePresets[style]) {
+        // For any color property in the style preset, convert from hex to name if needed
+        const styledParams = { ...ShapeStylePresets[style] };
 
-      // Convert any hex colors in the style preset to names for UI display
+        // Convert any hex colors in the style preset to names for UI display
+        colorProps.forEach((prop) => {
+          if (styledParams[prop] && styledParams[prop].startsWith("#")) {
+            styledParams[prop] =
+              ColorPalette.getNameByHex(styledParams[prop]) ||
+              styledParams[prop];
+          }
+        });
+
+        Object.assign(this.params, styledParams);
+      }
+
+      // Restore color settings if not specifically defined in the style preset
       colorProps.forEach((prop) => {
-        if (styledParams[prop] && styledParams[prop].startsWith("#")) {
-          styledParams[prop] =
-            ColorPalette.getNameByHex(styledParams[prop]) || styledParams[prop];
+        if (
+          ShapeStylePresets[style] &&
+          !ShapeStylePresets[style].hasOwnProperty(prop)
+        ) {
+          this.params[prop] = colorSettings[prop];
         }
       });
-
-      Object.assign(this.params, styledParams);
     }
+    // If switching to "custom", don't change any parameter values - just update the style tracking
 
-    // Restore color settings if not specifically defined in the style preset
-    colorProps.forEach((prop) => {
-      if (
-        ShapeStylePresets[style] &&
-        !ShapeStylePresets[style].hasOwnProperty(prop)
-      ) {
-        this.params[prop] = colorSettings[prop];
-      }
-    });
+    // Update current style
+    this.currentStyle = style;
 
     // Update UI
     UIManager.updateAllControllers();
@@ -544,8 +596,13 @@ const ParamsManager = {
     // After UI update, convert color names to hex for drawing
     this.convertNamedColorsToHex();
 
-    // Regenerate path
-    PathGenerator.generatePath();
+    // Clear the flag
+    this.isUpdatingFromStyle = false;
+
+    // Only regenerate path if NOT switching to custom
+    if (style !== "custom") {
+      PathGenerator.generatePath();
+    }
   },
 
   convertNamedColorsToHex() {
@@ -1195,6 +1252,7 @@ const UIManager = {
     path: null,
     color: null,
   },
+  styleController: null, // Store reference to style controller
 
   setupGUI() {
     this.gui = new dat.GUI();
@@ -1234,10 +1292,39 @@ const UIManager = {
       .add(ParamsManager.params, "exportCustomSizePackage")
       .name("Save (package) (E)");
 
-    this.folders.general
+    // Store reference to style controller
+    this.styleController = this.folders.general
       .add(ParamsManager.params, "shapeStyle", Object.keys(ShapeStylePresets))
       .name("Shape Style")
       .onChange((value) => ParamsManager.applyStyle(value));
+  },
+
+  // Method to update style controller when auto-switching to custom
+  updateStyleController() {
+    if (this.styleController) {
+      this.styleController.setValue("custom");
+    }
+  },
+
+  // Helper method to add parameter with auto-switch functionality
+  addParameterWithAutoSwitch(folder, paramName, ...args) {
+    const controller = folder.add(ParamsManager.params, paramName, ...args);
+
+    // Store reference to the original onChange
+    const originalOnChange = controller.__onChange;
+
+    // Create new onChange that handles auto-switch
+    controller.onChange((value) => {
+      // Handle the parameter change and potential style switch
+      ParamsManager.onParameterChange(paramName, value);
+
+      // Call original onChange if it exists (for things like redraw, regeneratePath, etc.)
+      if (originalOnChange) {
+        originalOnChange.call(controller, value);
+      }
+    });
+
+    return controller;
   },
 
   setupExportFolder() {
@@ -1274,61 +1361,73 @@ const UIManager = {
 
   setupGridFolder() {
     this.folders.grid = this.gui.addFolder("Grid");
-    this.folders.grid.add(ParamsManager.params, "showGrid").name("Show Grid");
-    this.folders.grid
-      .add(ParamsManager.params, "gridOnTop")
-      .name("Grid on Top");
-    this.folders.grid
-      .add(ParamsManager.params, "squareGrid")
-      .name("Square Grid");
 
-    let widthControl = this.folders.grid
-      .add(ParamsManager.params, "gridWidth", 1, 20, 1)
-      .onChange(() => {
-        if (ParamsManager.params.squareGrid) {
-          ParamsManager.params.gridHeight = ParamsManager.params.gridWidth;
-          // Update height controller
-          for (let controller of this.folders.grid.__controllers) {
-            if (controller.property === "gridHeight") {
-              controller.updateDisplay();
-              break;
-            }
+    this.addParameterWithAutoSwitch(this.folders.grid, "showGrid").name(
+      "Show Grid"
+    );
+    this.addParameterWithAutoSwitch(this.folders.grid, "gridOnTop").name(
+      "Grid on Top"
+    );
+    this.addParameterWithAutoSwitch(this.folders.grid, "squareGrid").name(
+      "Square Grid"
+    );
+
+    let widthControl = this.addParameterWithAutoSwitch(
+      this.folders.grid,
+      "gridWidth",
+      1,
+      20,
+      1
+    ).onChange((value) => {
+      if (ParamsManager.params.squareGrid) {
+        ParamsManager.params.gridHeight = ParamsManager.params.gridWidth;
+        // Update height controller
+        for (let controller of this.folders.grid.__controllers) {
+          if (controller.property === "gridHeight") {
+            controller.updateDisplay();
+            break;
           }
         }
-        PathGenerator.generatePath();
-      });
+      }
+      PathGenerator.generatePath();
+    });
 
-    let heightControl = this.folders.grid
-      .add(ParamsManager.params, "gridHeight", 1, 20, 1)
-      .onChange(() => {
-        if (ParamsManager.params.squareGrid) {
-          ParamsManager.params.gridWidth = ParamsManager.params.gridHeight;
-          // Update width controller
-          for (let controller of this.folders.grid.__controllers) {
-            if (controller.property === "gridWidth") {
-              controller.updateDisplay();
-              break;
-            }
+    let heightControl = this.addParameterWithAutoSwitch(
+      this.folders.grid,
+      "gridHeight",
+      1,
+      20,
+      1
+    ).onChange((value) => {
+      if (ParamsManager.params.squareGrid) {
+        ParamsManager.params.gridWidth = ParamsManager.params.gridHeight;
+        // Update width controller
+        for (let controller of this.folders.grid.__controllers) {
+          if (controller.property === "gridWidth") {
+            controller.updateDisplay();
+            break;
           }
         }
-        PathGenerator.generatePath();
-      });
-    this.folders.grid
-      .add(ParamsManager.params, "gridStrokeWeight", 0.1, 5)
-      .name("Grid Stroke Weight");
-    this.folders.grid
-      .add(ParamsManager.params, "gridBlur", 0, 20)
-      .name("Grid Blur");
-    this.folders.grid
-      .add(ParamsManager.params, "gridMargin", 0, 300)
+      }
+      PathGenerator.generatePath();
+    });
+
+    this.addParameterWithAutoSwitch(
+      this.folders.grid,
+      "gridStrokeWeight",
+      0.1,
+      5
+    ).name("Grid Stroke Weight");
+    this.addParameterWithAutoSwitch(this.folders.grid, "gridBlur", 0, 20).name(
+      "Grid Blur"
+    );
+    this.addParameterWithAutoSwitch(this.folders.grid, "gridMargin", 0, 300)
       .name("Margin")
       .onChange(() => redraw());
-    this.folders.grid
-      .add(ParamsManager.params, "gridPadding", 0, 200)
+    this.addParameterWithAutoSwitch(this.folders.grid, "gridPadding", 0, 200)
       .name("Padding")
       .onChange(() => redraw());
-    this.folders.grid
-      .add(ParamsManager.params, "showPadding")
+    this.addParameterWithAutoSwitch(this.folders.grid, "showPadding")
       .name("Show Padding")
       .onChange(() => redraw());
   },
@@ -1336,30 +1435,28 @@ const UIManager = {
   setupShapeFolder() {
     this.folders.shape = this.gui.addFolder("Shape");
 
-    this.folders.shape
-      .add(ParamsManager.params, "shapeType", ["rectangle", "ellipse"])
-      .name("Shape Type");
+    this.addParameterWithAutoSwitch(this.folders.shape, "shapeType", [
+      "rectangle",
+      "ellipse",
+    ]).name("Shape Type");
+    this.addParameterWithAutoSwitch(this.folders.shape, "showShape").name(
+      "Show Shape"
+    );
 
-    this.folders.shape
-      .add(ParamsManager.params, "showShape")
-      .name("Show Shape");
-
-    let booleanUnionController = this.folders.shape
-      .add(ParamsManager.params, "booleanUnion")
+    let booleanUnionController = this.addParameterWithAutoSwitch(
+      this.folders.shape,
+      "booleanUnion"
+    )
       .name("Boolean Union")
       .onChange((value) => {
         if (value === true) {
-          // For boolean union, ensure minimum spacing as percentage of grid size
-          // Use 2% of grid size as minimum
           const minSpacingPercentage = 0.02;
           const minSpacing =
             ParamsManager.params.gridSize * minSpacingPercentage;
 
-          // Set raw parameter value (not scaled)
           if (ParamsManager.params.pathShapeSpacing < minSpacing) {
             ParamsManager.params.pathShapeSpacing = minSpacing;
 
-            // Update spacing controller
             for (let controller of this.folders.path.__controllers) {
               if (controller.property === "pathShapeSpacing") {
                 controller.updateDisplay();
@@ -1369,7 +1466,6 @@ const UIManager = {
           }
         }
 
-        // Enable/disable insideBlur toggle
         for (let controller of this.folders.shape.__controllers) {
           if (controller.property === "insideBlur") {
             controller.domElement.parentElement.style.pointerEvents = value
@@ -1379,7 +1475,6 @@ const UIManager = {
               ? "1"
               : "0.5";
 
-            // Turn off insideBlur if boolean union is off
             if (!value && ParamsManager.params.insideBlur) {
               ParamsManager.params.insideBlur = false;
               controller.updateDisplay();
@@ -1388,130 +1483,166 @@ const UIManager = {
           }
         }
       });
-    this.folders.shape
-      .add(ParamsManager.params, "ellipseResolution", 8, 64, 1)
-      .name("Ellipse Resolution");
-    this.folders.shape
-      .add(ParamsManager.params, "positionNoise", 0, 50)
-      .name("Position Noise");
-    this.folders.shape
-      .add(ParamsManager.params, "sizeNoise", 0, 1, 0.1)
-      .name("Size Noise");
-    this.folders.shape
-      .add(ParamsManager.params, "shapeCornerRadius", 0, 50)
-      .name("Shape Corner Radius");
-    this.folders.shape
-      .add(ParamsManager.params, "showPathShapeStroke")
-      .name("Show Shape Stroke");
-    this.folders.shape
-      .add(ParamsManager.params, "shapeStrokeWeight", 0.1, 50)
-      .name("Shape Stroke Weight");
-    this.folders.shape
-      .add(ParamsManager.params, "shapeBlur", 0, 50)
-      .name("Shape Blur");
-    this.folders.shape
-      .add(ParamsManager.params, "insideBlur")
-      .name("Inside-Only Blur");
-    this.folders.shape
-      .add(ParamsManager.params, "shapeSize", 0.1, 2)
-      .name("Shape Size");
+
+    this.addParameterWithAutoSwitch(
+      this.folders.shape,
+      "ellipseResolution",
+      8,
+      64,
+      1
+    ).name("Ellipse Resolution");
+    this.addParameterWithAutoSwitch(
+      this.folders.shape,
+      "positionNoise",
+      0,
+      50
+    ).name("Position Noise");
+    this.addParameterWithAutoSwitch(
+      this.folders.shape,
+      "sizeNoise",
+      0,
+      1,
+      0.1
+    ).name("Size Noise");
+    this.addParameterWithAutoSwitch(
+      this.folders.shape,
+      "shapeCornerRadius",
+      0,
+      50
+    ).name("Shape Corner Radius");
+    this.addParameterWithAutoSwitch(
+      this.folders.shape,
+      "showPathShapeStroke"
+    ).name("Show Shape Stroke");
+    this.addParameterWithAutoSwitch(
+      this.folders.shape,
+      "shapeStrokeWeight",
+      0.1,
+      50
+    ).name("Shape Stroke Weight");
+    this.addParameterWithAutoSwitch(
+      this.folders.shape,
+      "shapeBlur",
+      0,
+      50
+    ).name("Shape Blur");
+    this.addParameterWithAutoSwitch(this.folders.shape, "insideBlur").name(
+      "Inside-Only Blur"
+    );
+    this.addParameterWithAutoSwitch(
+      this.folders.shape,
+      "shapeSize",
+      0.1,
+      2
+    ).name("Shape Size");
   },
 
   setupPathFolder() {
     this.folders.path = this.gui.addFolder("Path");
 
-    this.folders.path
-      .add(ParamsManager.params, "showPath")
-      .name("Show Path Stroke");
-    this.folders.path
-      .add(ParamsManager.params, "fillPath")
-      .name("Show Path Fill");
-    this.folders.path
-      .add(ParamsManager.params, "pathBlur", 0, 50)
-      .name("Path Blur");
-    this.folders.path
-      .add(ParamsManager.params, "pathStrokeWeight", 0.1, 100)
-      .name("Path Stroke Weight");
+    this.addParameterWithAutoSwitch(this.folders.path, "showPath").name(
+      "Show Path Stroke"
+    );
+    this.addParameterWithAutoSwitch(this.folders.path, "fillPath").name(
+      "Show Path Fill"
+    );
+    this.addParameterWithAutoSwitch(this.folders.path, "pathBlur", 0, 50).name(
+      "Path Blur"
+    );
+    this.addParameterWithAutoSwitch(
+      this.folders.path,
+      "pathStrokeWeight",
+      0.1,
+      100
+    ).name("Path Stroke Weight");
+    this.addParameterWithAutoSwitch(this.folders.path, "pathType", [
+      "straight",
+      "curved",
+      "continuous",
+    ]).name("Path Type");
 
-    this.folders.path
-      .add(ParamsManager.params, "pathType", [
-        "straight",
-        "curved",
-        "continuous",
-      ])
-      .name("Path Type");
-
-    this.folders.path
-      .add(ParamsManager.params, "selectedCells", 2, 50, 1)
+    this.addParameterWithAutoSwitch(
+      this.folders.path,
+      "selectedCells",
+      2,
+      50,
+      1
+    )
       .name("Number of Cells")
       .onChange(() => {
-        // Regenerate path on cell count change
         PathGenerator.generatePath();
       });
 
-    let spacingController = this.folders.path
-      .add(ParamsManager.params, "pathShapeSpacing", 1, 500)
+    let spacingController = this.addParameterWithAutoSwitch(
+      this.folders.path,
+      "pathShapeSpacing",
+      1,
+      500
+    )
       .name("Shape Spacing")
       .onChange((value) => {
-        // Enforce minimum spacing if boolean union is active
         if (ParamsManager.params.booleanUnion && value < 10) {
           ParamsManager.params.pathShapeSpacing = 10;
           spacingController.updateDisplay();
         }
       });
 
-    this.folders.path
-      .add(ParamsManager.params, "alignShapesToGrid")
-      .name("Align Shapes to Grid");
-    this.folders.path
-      .add(ParamsManager.params, "curveAmount", 0, 1)
-      .name("Curvature");
-    this.folders.path
-      .add(ParamsManager.params, "constrainToGrid")
-      .name("Constrain to Grid");
-    this.folders.path
-      .add(ParamsManager.params, "closedLoop")
-      .name("Close Loop");
+    this.addParameterWithAutoSwitch(
+      this.folders.path,
+      "alignShapesToGrid"
+    ).name("Align Shapes to Grid");
+    this.addParameterWithAutoSwitch(
+      this.folders.path,
+      "curveAmount",
+      0,
+      1
+    ).name("Curvature");
+    this.addParameterWithAutoSwitch(this.folders.path, "constrainToGrid").name(
+      "Constrain to Grid"
+    );
+    this.addParameterWithAutoSwitch(this.folders.path, "closedLoop").name(
+      "Close Loop"
+    );
 
-    this.folders.path
-      .add(ParamsManager.params, "uniqueRowsCols")
+    this.addParameterWithAutoSwitch(this.folders.path, "uniqueRowsCols")
       .name("Unique Rows/Cols")
       .onChange(() => {
-        // Regenerate path on unique rows/cols change
         PathGenerator.generatePath();
       });
 
-    this.folders.path
-      .add(ParamsManager.params, "pathDirection", ["any", "90", "45", "90+45"])
+    this.addParameterWithAutoSwitch(this.folders.path, "pathDirection", [
+      "any",
+      "90",
+      "45",
+      "90+45",
+    ])
       .name("Path Direction")
       .onChange(() => {
-        // Regenerate path on direction change
         PathGenerator.generatePath();
       });
 
-    this.folders.path
-      .add(ParamsManager.params, "includeSides")
+    this.addParameterWithAutoSwitch(this.folders.path, "includeSides")
       .name("Side Connections")
       .onChange(() => {
-        // Regenerate path on side connections change
         PathGenerator.generatePath();
       });
 
-    this.folders.path
-      .add(ParamsManager.params, "pathCornerRadius", 0, 50)
-      .name("Path Corner Radius");
-
-    this.folders.path
-      .add(ParamsManager.params, "pathStrokeCap", [
-        "round",
-        "square",
-        "project",
-      ])
-      .name("Path Stroke Cap");
-
-    this.folders.path
-      .add(ParamsManager.params, "pathStrokeJoin", ["miter", "round", "bevel"])
-      .name("Path Stroke Join");
+    this.addParameterWithAutoSwitch(
+      this.folders.path,
+      "pathCornerRadius",
+      0,
+      50
+    ).name("Path Corner Radius");
+    this.addParameterWithAutoSwitch(this.folders.path, "pathStrokeCap", [
+      "round",
+      "square",
+      "project",
+    ]).name("Path Stroke Cap");
+    this.addParameterWithAutoSwitch(this.folders.path, "pathStrokeJoin", [
+      "miter",
+      "round",
+      "bevel",
+    ]).name("Path Stroke Join");
   },
 
   setupColorFolder() {
@@ -1540,15 +1671,15 @@ const UIManager = {
     // Background color dropdown
     this.folders.color
       .add(
-        ParamsManager.colorNames, // Use colorNames object for UI display
+        ParamsManager.colorNames,
         "backgroundColor",
         ColorPalette.getMainColorNames()
       )
       .name("Background Color")
       .onChange((value) => {
-        // Update both name and hex
         ParamsManager.colorNames.backgroundColor = value;
         ParamsManager.params.backgroundColor = ColorPalette.getHexByName(value);
+        ParamsManager.onParameterChange("backgroundColor", value);
       });
 
     // Grid color dropdown
@@ -1562,6 +1693,7 @@ const UIManager = {
       .onChange((value) => {
         ParamsManager.colorNames.gridColor = value;
         ParamsManager.params.gridColor = ColorPalette.getHexByName(value);
+        ParamsManager.onParameterChange("gridColor", value);
       });
 
     // Shape stroke color dropdown
@@ -1576,6 +1708,7 @@ const UIManager = {
         ParamsManager.colorNames.shapeStrokeColor = value;
         ParamsManager.params.shapeStrokeColor =
           ColorPalette.getHexByName(value);
+        ParamsManager.onParameterChange("shapeStrokeColor", value);
       });
 
     // Path stroke color dropdown
@@ -1589,6 +1722,7 @@ const UIManager = {
       .onChange((value) => {
         ParamsManager.colorNames.pathStrokeColor = value;
         ParamsManager.params.pathStrokeColor = ColorPalette.getHexByName(value);
+        ParamsManager.onParameterChange("pathStrokeColor", value);
       });
 
     // Path fill color dropdown
@@ -1602,38 +1736,37 @@ const UIManager = {
       .onChange((value) => {
         ParamsManager.colorNames.pathFillColor = value;
         ParamsManager.params.pathFillColor = ColorPalette.getHexByName(value);
+        ParamsManager.onParameterChange("pathFillColor", value);
       });
 
     // Show shape fill toggle
-    this.folders.color
-      .add(ParamsManager.params, "showFill")
-      .name("Show Shape Fill");
+    this.addParameterWithAutoSwitch(this.folders.color, "showFill").name(
+      "Show Shape Fill"
+    );
 
     // Shape transparency slider
-    this.folders.color
-      .add(ParamsManager.params, "shapeAlpha", 0, 1)
+    this.addParameterWithAutoSwitch(this.folders.color, "shapeAlpha", 0, 1)
       .step(0.01)
       .name("Shape Transparency");
 
     // Gradient type dropdown
-    this.folders.color
-      .add(ParamsManager.params, "gradientType", [
-        "none",
-        "horizontal",
-        "vertical",
-        "length",
-        "radial",
-        "diagonal",
-        "conic",
-      ])
-      .name("Gradient Type");
+    this.addParameterWithAutoSwitch(this.folders.color, "gradientType", [
+      "none",
+      "horizontal",
+      "vertical",
+      "length",
+      "radial",
+      "diagonal",
+      "conic",
+    ]).name("Gradient Type");
 
     // Gradient colors count
-    this.folders.color
-      .add(ParamsManager.params, "gradientColors", ["2", "3"])
-      .name("Gradient Colors");
+    this.addParameterWithAutoSwitch(this.folders.color, "gradientColors", [
+      "2",
+      "3",
+    ]).name("Gradient Colors");
 
-    // Shape fill color 1 dropdown
+    // Shape fill color dropdowns
     this.folders.color
       .add(
         ParamsManager.colorNames,
@@ -1644,9 +1777,9 @@ const UIManager = {
       .onChange((value) => {
         ParamsManager.colorNames.shapeFillColor = value;
         ParamsManager.params.shapeFillColor = ColorPalette.getHexByName(value);
+        ParamsManager.onParameterChange("shapeFillColor", value);
       });
 
-    // Shape fill color 2 dropdown
     this.folders.color
       .add(
         ParamsManager.colorNames,
@@ -1657,9 +1790,9 @@ const UIManager = {
       .onChange((value) => {
         ParamsManager.colorNames.shapeFillColor2 = value;
         ParamsManager.params.shapeFillColor2 = ColorPalette.getHexByName(value);
+        ParamsManager.onParameterChange("shapeFillColor2", value);
       });
 
-    // Shape fill color 3 dropdown
     this.folders.color
       .add(
         ParamsManager.colorNames,
@@ -1670,6 +1803,7 @@ const UIManager = {
       .onChange((value) => {
         ParamsManager.colorNames.shapeFillColor3 = value;
         ParamsManager.params.shapeFillColor3 = ColorPalette.getHexByName(value);
+        ParamsManager.onParameterChange("shapeFillColor3", value);
       });
   },
 
